@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Illustrative BI dashboard mock for Justified Analytics">
+  <rect width="640" height="360" fill="#10141c"/>
+  <rect x="16" y="16" width="608" height="328" rx="10" fill="#0b0e14" stroke="rgba(255,255,255,0.1)"/>
+  <text x="32" y="44" fill="#5b9fd4" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="1">JUSTIFIED ANALYTICS · POWER BI</text>
+  <text x="32" y="68" fill="#e8ecf4" font-family="Space Grotesk, sans-serif" font-size="18" font-weight="600">Growth Insights</text>
+  <rect x="32" y="88" width="140" height="60" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="44" y="110" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="9">REVENUE</text>
+  <text x="44" y="132" fill="#e8ecf4" font-family="IBM Plex Mono, monospace" font-size="18">KPI</text>
+  <rect x="188" y="88" width="140" height="60" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="200" y="110" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="9">PIPELINE</text>
+  <text x="200" y="132" fill="#e8ecf4" font-family="IBM Plex Mono, monospace" font-size="18">KPI</text>
+  <rect x="344" y="88" width="140" height="60" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="356" y="110" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="9">OPS LOAD</text>
+  <text x="356" y="132" fill="#e8ecf4" font-family="IBM Plex Mono, monospace" font-size="18">KPI</text>
+  <rect x="500" y="88" width="108" height="60" rx="8" fill="rgba(91,159,212,0.12)" stroke="rgba(91,159,212,0.35)"/>
+  <text x="512" y="110" fill="#5b9fd4" font-family="IBM Plex Mono, monospace" font-size="9">LIVE</text>
+  <text x="512" y="132" fill="#e8ecf4" font-family="IBM Plex Mono, monospace" font-size="18">PBI</text>
+  <rect x="32" y="164" width="380" height="160" rx="8" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+  <polyline fill="none" stroke="#5b9fd4" stroke-width="2.5" points="52,290 100,270 148,240 196,250 244,210 292,200 340,175 388,165"/>
+  <polygon fill="rgba(91,159,212,0.12)" points="52,300 100,280 148,250 196,260 244,220 292,210 340,185 388,175 388,300 52,300"/>
+  <text x="44" y="182" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="9">SALES / MARKETING TREND</text>
+  <rect x="428" y="164" width="180" height="160" rx="8" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+  <text x="440" y="182" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="9">SOURCES</text>
+  <circle cx="470" cy="220" r="6" fill="#5b9fd4"/>
+  <text x="486" y="224" fill="#e8ecf4" font-family="Space Grotesk, sans-serif" font-size="12">CRM</text>
+  <circle cx="470" cy="248" r="6" fill="rgba(91,159,212,0.6)"/>
+  <text x="486" y="252" fill="#e8ecf4" font-family="Space Grotesk, sans-serif" font-size="12">ERP</text>
+  <circle cx="470" cy="276" r="6" fill="rgba(91,159,212,0.35)"/>
+  <text x="486" y="280" fill="#e8ecf4" font-family="Space Grotesk, sans-serif" font-size="12">Sheets</text>
+  <text x="440" y="310" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="8">Illustrative layout</text>
+</svg>

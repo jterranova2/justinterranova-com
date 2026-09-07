@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Portfolio — Justin Terranova</title>
+  <meta name="description" content="Work samples — Justified Analytics BI practice and selected operational / BI case studies from Justin Terranova." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="mesh" aria-hidden="true"></div>
+  <div class="grid-overlay" aria-hidden="true"></div>
+  <div class="cursor-spotlight" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="nav-inner">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">JT</span>
+        <span class="brand-name">Justin Terranova</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="index.html">Home</a>
+        <a href="portfolio.html" class="active">Portfolio</a>
+        <a href="about.html">About</a>
+        <a href="resume.html">Resume</a>
+        <a href="skills.html">Skills</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- HERO -->
+    <section class="portfolio-hero">
+      <div class="container">
+        <p class="eyebrow mono">Work samples · Selected work</p>
+        <h1 class="page-title">Portfolio</h1>
+        <p class="page-lead">
+          BI systems and operational programs I’ve built — from Justified Analytics (founder practice)
+          to construction analytics, labor forecasting, inventory control, and process automation.
+        </p>
+      </div>
+    </section>
+
+    <!-- 01 JUSTIFIED ANALYTICS -->
+    <section class="section" id="justified-analytics">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-num mono">01</span>
+          <h2>Justified Analytics</h2>
+          <p>A BI practice I built — data that works as hard as you do. Historical offerings and delivery model below.</p>
+        </div>
+
+        <div class="ja-intro glass-card reveal" data-spotlight>
+          <p class="ja-tagline mono">Practice I built · founder-led BI</p>
+          <p>
+            Custom Power BI dashboards, data pipelines, and ops automation for teams that need clarity without
+            enterprise bloat. Delivery: connect data → define vision (30&nbsp;min) → build in 1–2 weeks for starter engagements.
+          </p>
+        </div>
+
+        <div class="ja-services">
+          <article class="ja-service glass-card reveal" style="--d: 0ms" data-spotlight>
+            <span class="bento-num mono">01</span>
+            <h3>Custom Power BI dashboards</h3>
+            <p>Browser-hosted, interactive reports — no viewer licenses needed for stakeholders.</p>
+          </article>
+          <article class="ja-service glass-card reveal" style="--d: 60ms" data-spotlight>
+            <span class="bento-num mono">02</span>
+            <h3>Connect / clean / transform</h3>
+            <p>Source integration and modeling; cloud repo when the engagement needs durable pipelines.</p>
+          </article>
+          <article class="ja-service glass-card reveal" style="--d: 120ms" data-spotlight>
+            <span class="bento-num mono">03</span>
+            <h3>Streamlined ops / automation</h3>
+            <p>Reduce manual reporting loops so operators spend time deciding, not reconciling.</p>
+          </article>
+          <article class="ja-service glass-card reveal" style="--d: 180ms" data-spotlight>
+            <span class="bento-num mono">04</span>
+            <h3>Growth-focused insights</h3>
+            <p>Sales, marketing, and ops views that surface where to invest next.</p>
+          </article>
+        </div>
+
+        <h3 class="subsection-label mono reveal">Packages <span>(historical JA offering)</span></h3>
+        <div class="package-strip">
+          <article class="package-card glass-card reveal" style="--d: 0ms" data-spotlight>
+            <span class="package-name">Starter</span>
+            <span class="package-price mono">$2,500</span>
+            <ul>
+              <li>1 dashboard</li>
+              <li>Up to 2 sources</li>
+              <li>1–2 weeks</li>
+            </ul>
+          </article>
+          <article class="package-card glass-card reveal" style="--d: 60ms" data-spotlight>
+            <span class="package-name">Growth</span>
+            <span class="package-price mono">$5,000–$7,500</span>
+            <ul>
+              <li>2–3 dashboards</li>
+              <li>Up to 5 sources</li>
+              <li>3–4 weeks</li>
+            </ul>
+          </article>
+          <article class="package-card glass-card reveal" style="--d: 120ms" data-spotlight>
+            <span class="package-name">Premium</span>
+            <span class="package-price mono">$10,000–$15,000</span>
+            <ul>
+              <li>Unlimited dashboards/sources</li>
+              <li>Advanced analytics</li>
+              <li>6–8 weeks</li>
+            </ul>
+          </article>
+          <article class="package-card glass-card reveal" style="--d: 180ms" data-spotlight>
+            <span class="package-name">Retainer</span>
+            <span class="package-price mono">$1,500–$3,000/mo</span>
+            <ul>
+              <li>Ongoing support</li>
+              <li>Iteration &amp; refresh</li>
+              <li>Priority access</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="ja-intake glass-card reveal" data-spotlight>
+          <span class="bento-num mono">BOT</span>
+          <h3>Intake GPT — lead qualification</h3>
+          <p>Conversational intake → package recommendation → summary routed to Justin. Built to qualify leads without a sales funnel tax.</p>
+        </div>
+
+        <div class="ja-gallery reveal" id="ja-gallery">
+          <figure class="ja-shot is-mock">
+            <img src="assets/portfolio/mock-bi.svg" alt="Illustrative Justified Analytics dashboard layout" />
+            <figcaption class="mono mock-caption">Illustrative layout</figcaption>
+          </figure>
+          <figure class="ja-shot is-mock">
+            <img src="assets/portfolio/mock-ops.svg" alt="Illustrative ops planning dashboard layout" />
+            <figcaption class="mono mock-caption">Illustrative layout</figcaption>
+          </figure>
+          <figure class="ja-shot is-mock">
+            <img src="assets/portfolio/mock-construction.svg" alt="Illustrative construction BI dashboard layout" />
+            <figcaption class="mono mock-caption">Illustrative layout</figcaption>
+          </figure>
+          <figure class="ja-shot is-mock">
+            <img src="assets/portfolio/mock-inventory.svg" alt="Illustrative inventory dashboard layout" />
+            <figcaption class="mono mock-caption">Illustrative layout</figcaption>
+          </figure>
+          <figure class="ja-shot is-mock">
+            <img src="assets/portfolio/mock-automation.svg" alt="Illustrative automation dashboard layout" />
+            <figcaption class="mono mock-caption">Illustrative layout</figcaption>
+          </figure>
+          <figure class="ja-shot is-mock">
+            <img src="assets/portfolio/mock-bi.svg" alt="Illustrative Power BI growth insights layout" />
+            <figcaption class="mono mock-caption">Illustrative layout</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 CASE STUDIES -->
+    <section class="section" id="case-studies">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-num mono">02</span>
+          <h2>Selected case studies</h2>
+          <p>Problem → approach → outcome from career roles across construction BI, ops planning, automation, and inventory.</p>
+        </div>
+
+        <div class="portfolio-grid">
+          <article class="portfolio-card glass-card reveal" style="--d: 0ms" data-spotlight>
+            <div class="portfolio-visual">
+              <img src="assets/portfolio/mock-construction.svg" alt="Illustrative construction BI dashboard layout" />
+              <span class="mono mock-caption">Illustrative layout</span>
+            </div>
+            <div class="portfolio-body">
+              <p class="outcome-org">PG&amp;E / Evergreen · Current</p>
+              <h3>Construction BI</h3>
+              <dl class="outcome-flow">
+                <div>
+                  <dt>Problem</dt>
+                  <dd>Paving / construction ops needed decision-ready visibility across daily work, managers, and cycle time — plus cleaner invoice reconciliation.</dd>
+                </div>
+                <div>
+                  <dt>Approach</dt>
+                  <dd>Primary BI for WOR/DOR reporting, Construction Manager Dashboard, production / cycle-time analytics, and the PgClean invoice reconciliation tool.</dd>
+                </div>
+                <div>
+                  <dt>Outcome</dt>
+                  <dd>Analytical frameworks that support operational and cost-related decision-making for PG&amp;E paving operations.</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+
+          <article class="portfolio-card glass-card reveal" style="--d: 60ms" data-spotlight>
+            <div class="portfolio-visual">
+              <img src="assets/portfolio/mock-bi.svg" alt="Illustrative BI dashboard layout" />
+              <span class="mono mock-caption">Illustrative layout</span>
+            </div>
+            <div class="portfolio-body">
+              <p class="outcome-org">Peaxy</p>
+              <h3>BI dashboards for labor cost</h3>
+              <dl class="outcome-flow">
+                <div>
+                  <dt>Problem</dt>
+                  <dd>Operations leadership needed clearer labor visibility to control cost without slowing delivery.</dd>
+                </div>
+                <div>
+                  <dt>Approach</dt>
+                  <dd>Partnered with VP of Operations and CEO; built BI dashboards and visualization for large operational datasets.</dd>
+                </div>
+                <div>
+                  <dt>Outcome</dt>
+                  <dd>Dashboards that contributed to a 15% labor cost reduction.</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+
+          <article class="portfolio-card glass-card reveal" style="--d: 120ms" data-spotlight>
+            <div class="portfolio-visual">
+              <img src="assets/portfolio/mock-ops.svg" alt="Illustrative weekly ops planning dashboard layout" />
+              <span class="mono mock-caption">Illustrative layout</span>
+            </div>
+            <div class="portfolio-body">
+              <p class="outcome-org">Stuart Event Rentals</p>
+              <h3>Weekly Ops Planning + forecasting</h3>
+              <dl class="outcome-flow">
+                <div>
+                  <dt>Problem</dt>
+                  <dd>Warehouse, field, and transportation labor needed a repeatable planning rhythm and forecast discipline.</dd>
+                </div>
+                <div>
+                  <dt>Approach</dt>
+                  <dd>Built and ran a Weekly Ops Planning System; automated labor forecasting and developed a structural load-list calculator.</dd>
+                </div>
+                <div>
+                  <dt>Outcome</dt>
+                  <dd>35% average monthly labor cost reduction.</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+
+          <article class="portfolio-card glass-card reveal" style="--d: 180ms" data-spotlight>
+            <div class="portfolio-visual">
+              <img src="assets/portfolio/mock-automation.svg" alt="Illustrative automation quality dashboard layout" />
+              <span class="mono mock-caption">Illustrative layout</span>
+            </div>
+            <div class="portfolio-body">
+              <p class="outcome-org">MSC · MsClean</p>
+              <h3>VBA automation for vessel reconciliation</h3>
+              <dl class="outcome-flow">
+                <div>
+                  <dt>Problem</dt>
+                  <dd>Load-list errors in vessel reconciliation workflows were driving costly rework.</dd>
+                </div>
+                <div>
+                  <dt>Approach</dt>
+                  <dd>Built MsClean VB automation for vessel reconciliation; led Excel help desk and training around the new workflow.</dd>
+                </div>
+                <div>
+                  <dt>Outcome</dt>
+                  <dd>88% load-list error reduction (~$2.3M annual savings).</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+
+          <article class="portfolio-card portfolio-card-wide glass-card reveal" style="--d: 240ms" data-spotlight>
+            <div class="portfolio-visual">
+              <img src="assets/portfolio/mock-inventory.svg" alt="Illustrative inventory accuracy dashboard layout" />
+              <span class="mono mock-caption">Illustrative layout</span>
+            </div>
+            <div class="portfolio-body">
+              <p class="outcome-org">CEVA Logistics · Tesla contract</p>
+              <h3>Inventory accuracy &amp; variance control</h3>
+              <dl class="outcome-flow">
+                <div>
+                  <dt>Problem</dt>
+                  <dd>Inventory accuracy and monthly variance were undermining reliable supply for Tesla operations.</dd>
+                </div>
+                <div>
+                  <dt>Approach</dt>
+                  <dd>Led ops with 16 direct reports and 250+ hourly associates; drove Six Sigma Kaizen efforts focused on accuracy and variance.</dd>
+                </div>
+                <div>
+                  <dt>Outcome</dt>
+                  <dd>Inventory accuracy from 75% to 99%; variance to &lt;$5k/mo; maintained zero line-down for Tesla.</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>© <span id="y"></span> Justin Terranova · <a href="mailto:jterranova2@gmail.com">jterranova2@gmail.com</a></p>
+  </footer>
+  <script src="script.js"></script>
+</body>
+</html>

@@ -838,3 +838,250 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
   .cursor-spotlight { display: none !important; }
   body.has-pointer .glass-card:hover::before { opacity: 0; }
 }
+
+/* —— Portfolio —— */
+.portfolio-hero {
+  padding: 0.5rem 0 0;
+}
+.portfolio-hero .page-title {
+  padding-top: 0.35rem;
+  margin-bottom: 0.65rem;
+}
+.portfolio-hero .page-lead {
+  margin-bottom: 0.5rem;
+}
+
+.ja-intro {
+  padding: 1.5rem 1.5rem;
+  margin-bottom: 1.25rem;
+}
+.ja-tagline {
+  font-size: 0.72rem;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.65rem;
+}
+.ja-intro p:last-child {
+  color: var(--muted);
+  font-size: 1.02rem;
+  max-width: 48rem;
+}
+
+.ja-services {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+.ja-service {
+  padding: 1.35rem 1.35rem;
+}
+.ja-service h3 {
+  font-size: 1.08rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.45rem;
+}
+.ja-service p {
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.subsection-label {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0.5rem 0 1rem;
+  font-weight: 500;
+}
+.subsection-label span {
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.package-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.package-card {
+  padding: 1.25rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: 180px;
+}
+.package-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.package-price {
+  font-size: 0.95rem;
+  color: var(--accent);
+  font-weight: 500;
+}
+.package-card ul {
+  margin-top: 0.35rem;
+  display: grid;
+  gap: 0.35rem;
+}
+.package-card li {
+  color: var(--muted);
+  font-size: 0.88rem;
+  padding-left: 0.85rem;
+  position: relative;
+}
+.package-card li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.7;
+}
+
+.ja-intake {
+  padding: 1.35rem 1.4rem;
+  margin-bottom: 1.75rem;
+}
+.ja-intake h3 {
+  font-size: 1.08rem;
+  font-weight: 600;
+  margin-bottom: 0.45rem;
+}
+.ja-intake p {
+  color: var(--muted);
+  font-size: 0.95rem;
+  max-width: 44rem;
+}
+
+.ja-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+.ja-shot {
+  margin: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  aspect-ratio: 16 / 10;
+  position: relative;
+}
+.ja-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+.ja-shot figcaption,
+.mock-caption {
+  font-size: 0.65rem;
+  color: rgba(154, 163, 181, 0.75);
+  letter-spacing: 0.04em;
+}
+.ja-shot figcaption {
+  position: absolute;
+  left: 0.65rem;
+  bottom: 0.55rem;
+  background: rgba(11, 14, 20, 0.72);
+  padding: 0.2rem 0.45rem;
+  border-radius: 4px;
+}
+.ja-shot.is-mock figcaption::after {
+  content: " · Illustrative layout";
+}
+
+.portfolio-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.15rem;
+  padding-bottom: 2rem;
+}
+.portfolio-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.portfolio-card-wide {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+}
+.portfolio-visual {
+  position: relative;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+.portfolio-card-wide .portfolio-visual {
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+  aspect-ratio: auto;
+  min-height: 220px;
+}
+.portfolio-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+.portfolio-visual .mock-caption {
+  position: absolute;
+  left: 0.65rem;
+  bottom: 0.55rem;
+  background: rgba(11, 14, 20, 0.72);
+  padding: 0.2rem 0.45rem;
+  border-radius: 4px;
+}
+.portfolio-body {
+  padding: 1.35rem 1.4rem 1.5rem;
+}
+.portfolio-body .outcome-org {
+  margin-bottom: 0.4rem;
+}
+.portfolio-body h3 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 1rem;
+}
+.portfolio-body .outcome-flow {
+  gap: 0.75rem;
+}
+
+@media (max-width: 960px) {
+  .package-strip { grid-template-columns: repeat(2, 1fr); }
+  .ja-gallery { grid-template-columns: repeat(2, 1fr); }
+  .portfolio-card-wide {
+    grid-template-columns: 1fr;
+  }
+  .portfolio-card-wide .portfolio-visual {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    aspect-ratio: 16 / 9;
+  }
+}
+
+@media (max-width: 860px) {
+  .ja-services { grid-template-columns: 1fr; }
+  .portfolio-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .package-strip { grid-template-columns: 1fr; }
+  .ja-gallery { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Illustrative automation error-reduction dashboard mock">
+  <rect width="640" height="360" fill="#10141c"/>
+  <rect x="16" y="16" width="608" height="328" rx="10" fill="#0b0e14" stroke="rgba(255,255,255,0.1)"/>
+  <text x="32" y="44" fill="#5b9fd4" font-family="IBM Plex Mono, monospace" font-size="11" letter-spacing="1">VBA AUTOMATION · MSCLEAN</text>
+  <text x="32" y="68" fill="#e8ecf4" font-family="Space Grotesk, sans-serif" font-size="18" font-weight="600">Load-list Quality</text>
+  <rect x="32" y="88" width="220" height="80" rx="8" fill="rgba(91,159,212,0.12)" stroke="rgba(91,159,212,0.35)"/>
+  <text x="44" y="112" fill="#5b9fd4" font-family="IBM Plex Mono, monospace" font-size="9">ERROR REDUCTION</text>
+  <text x="44" y="144" fill="#e8ecf4" font-family="IBM Plex Mono, monospace" font-size="26">88%</text>
+  <rect x="268" y="88" width="220" height="80" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="280" y="112" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="9">ANNUAL SAVINGS</text>
+  <text x="280" y="144" fill="#e8ecf4" font-family="IBM Plex Mono, monospace" font-size="26">~$2.3M</text>
+  <rect x="504" y="88" width="104" height="80" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="516" y="112" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="9">STACK</text>
+  <text x="516" y="144" fill="#e8ecf4" font-family="IBM Plex Mono, monospace" font-size="18">VBA</text>
+  <rect x="32" y="188" width="576" height="136" rx="8" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+  <text x="44" y="208" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="9">ERROR RATE BEFORE → AFTER</text>
+  <!-- Before bars (taller = more errors) -->
+  <rect x="80" y="230" width="28" height="70" rx="3" fill="rgba(154,163,181,0.4)"/>
+  <rect x="120" y="220" width="28" height="80" rx="3" fill="rgba(154,163,181,0.4)"/>
+  <rect x="160" y="235" width="28" height="65" rx="3" fill="rgba(154,163,181,0.4)"/>
+  <rect x="200" y="215" width="28" height="85" rx="3" fill="rgba(154,163,181,0.4)"/>
+  <!-- After bars (short) -->
+  <rect x="320" y="280" width="28" height="20" rx="3" fill="rgba(91,159,212,0.85)"/>
+  <rect x="360" y="275" width="28" height="25" rx="3" fill="rgba(91,159,212,0.85)"/>
+  <rect x="400" y="282" width="28" height="18" rx="3" fill="rgba(91,159,212,0.85)"/>
+  <rect x="440" y="278" width="28" height="22" rx="3" fill="rgba(91,159,212,0.85)"/>
+  <text x="80" y="318" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="8">BEFORE</text>
+  <text x="320" y="318" fill="#5b9fd4" font-family="IBM Plex Mono, monospace" font-size="8">AFTER</text>
+  <text x="500" y="318" fill="#9aa3b5" font-family="IBM Plex Mono, monospace" font-size="8">Illustrative layout</text>
+</svg>
