@@ -1,67 +1,40 @@
 # Justin Terranova Portfolio
 
-Personal portfolio site for **Justin Terranova** — a simple static multi-page site (HTML + CSS + a tiny bit of JS for mobile nav).
+Ops / BI / Analytics leadership portfolio — static HTML/CSS/JS with a single-page home and polished subpages.
 
-**Live repo:** [github.com/jterranova2/justinterranova-com](https://github.com/jterranova2/justinterranova-com)
+**Live:** [jterranova2.github.io/justinterranova-com](https://jterranova2.github.io/justinterranova-com/) · [justinterranova.com](https://www.justinterranova.com)
 
 ## Pages
 
 | File | Description |
 |------|-------------|
-| `index.html` | Home — hero, quote, section cards, contact links |
-| `about.html` | About Me + contact details |
+| `index.html` | Home — hero, KPIs, capabilities, outcomes, timeline, stack, contact |
+| `about.html` | About + contact |
 | `resume.html` | Full work history + education |
-| `skills.html` | Skills in two columns |
-| `styles.css` | Shared dark professional theme |
-| `nav.js` | Mobile nav toggle |
-| `assets/` | Images (placeholders used where downloads were blocked) |
+| `skills.html` | Skills inventory |
+| `styles.css` | Design system (ops command center) |
+| `script.js` | Spotlight, reveals, KPI count-up, sticky nav |
+| `assets/` | Portrait and images |
 
-## Open locally
+## Design
 
-No build step required.
+Cool ops cyan on deep charcoal (`#0b0e14`), Space Grotesk + IBM Plex Mono, glass nav, cursor/card spotlights (disabled for touch / reduced motion), scroll reveals, and KPI count-up.
 
-**Option A — open the file**
-
-```bash
-open index.html
-# or double-click index.html in your file manager
-```
-
-**Option B — local server** (recommended so paths behave like production)
+## Local preview
 
 ```bash
 cd justinterranova-com
 python3 -m http.server 8080
 ```
 
-Then visit [http://localhost:8080](http://localhost:8080).
+Visit [http://localhost:8080](http://localhost:8080). No build step.
 
 ## Deploy
 
-### Cloudflare Pages
-
-1. Log in to [Cloudflare Pages](https://pages.cloudflare.com/).
-2. **Create a project** → connect the GitHub repo `jterranova2/justinterranova-com`.
-3. Build settings:
-   - **Framework preset:** None
-   - **Build command:** *(leave empty)*
-   - **Publish directory:** `/` (site root — where `index.html` lives)
-4. Save and deploy. Each push to `main` will republish.
-
-### Netlify
-
-1. Log in to [Netlify](https://app.netlify.com/).
-2. **Add new site** → Import from Git → select `jterranova2/justinterranova-com`.
-3. Build settings:
-   - **Build command:** *(leave empty)*
-   - **Publish directory:** `.` (site root)
-4. Deploy. Subsequent pushes to `main` trigger new deploys.
-
-You can also drag-and-drop the folder onto Netlify’s manual deploy UI.
+GitHub Pages (or Cloudflare Pages / Netlify) from `main` — publish the site root. CNAME: `www.justinterranova.com`.
 
 ## Contact
 
 - Email: [jterranova2@gmail.com](mailto:jterranova2@gmail.com)
 - Phone: (408) 560-6987
 - LinkedIn: [linkedin.com/in/justinterranova](https://www.linkedin.com/in/justinterranova/)
-- Twitter: [twitter.com/justinterranova](https://twitter.com/justinterranova/)

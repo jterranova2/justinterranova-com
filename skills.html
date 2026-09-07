@@ -5,17 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Skills — Justin Terranova</title>
   <meta name="description" content="Professional skills — analytics, operations, logistics, and leadership." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div class="mesh" aria-hidden="true"></div>
+  <div class="grid-overlay" aria-hidden="true"></div>
+  <div class="cursor-spotlight" aria-hidden="true"></div>
+
   <header class="site-header">
     <div class="nav-inner">
       <a class="brand" href="index.html">
         <span class="brand-mark">JT</span>
         <span class="brand-name">Justin Terranova</span>
       </a>
-      <button class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">☰</button>
-      <nav class="nav-links" aria-label="Primary">
+      <button class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+            <nav class="nav-links" aria-label="Primary">
         <a href="index.html">Home</a>
         <a href="about.html">About</a>
         <a href="resume.html">Resume</a>
@@ -94,7 +103,6 @@
   <footer class="site-footer">
     <p>© <span id="y"></span> Justin Terranova · <a href="mailto:jterranova2@gmail.com">jterranova2@gmail.com</a></p>
   </footer>
-  <script src="nav.js"></script>
-  <script>document.getElementById("y").textContent = new Date().getFullYear();</script>
-</body>
+  <script src="script.js"></script>
+  </body>
 </html>

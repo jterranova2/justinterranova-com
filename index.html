@@ -3,88 +3,333 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Justin Terranova — Portfolio</title>
-  <meta name="description" content="Justin Terranova — operations leader, analytics/BI developer, and project manager." />
+  <title>Justin Terranova — Ops / BI / Analytics Leadership</title>
+  <meta name="description" content="Justin Terranova — operations leader, analytics/BI developer, and project manager. 18+ years driving measurable operational outcomes." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div class="mesh" aria-hidden="true"></div>
+  <div class="grid-overlay" aria-hidden="true"></div>
+  <div class="cursor-spotlight" aria-hidden="true"></div>
+
   <header class="site-header">
     <div class="nav-inner">
       <a class="brand" href="index.html">
         <span class="brand-mark">JT</span>
         <span class="brand-name">Justin Terranova</span>
       </a>
-      <button class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">☰</button>
+      <button class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
       <nav class="nav-links" aria-label="Primary">
-        <a href="index.html" class="active">Home</a>
-        <a href="about.html">About</a>
-        <a href="resume.html">Resume</a>
-        <a href="skills.html">Skills</a>
+        <a href="#impact" data-section="impact">Impact</a>
+        <a href="#capabilities" data-section="capabilities">Capabilities</a>
+        <a href="#outcomes" data-section="outcomes">Outcomes</a>
+        <a href="#experience" data-section="experience">Experience</a>
+        <a href="#stack" data-section="stack">Stack</a>
+        <a href="#contact" data-section="contact">Contact</a>
+        <a href="resume.html" class="nav-cta">Resume</a>
       </nav>
     </div>
   </header>
 
   <main>
-    <div class="container">
-      <section class="hero">
-        <div class="hero-visual has-img">
-          <img src="assets/justin-suit.jpg" alt="Justin Terranova in a suit" width="1055" height="900" />
+    <!-- HERO -->
+    <section class="hero" id="top">
+      <div class="container hero-grid">
+        <div class="hero-copy reveal">
+          <p class="eyebrow mono">Ops command brief · Bay Area</p>
+          <h1>Justin Terranova</h1>
+          <p class="hero-role">Ops / BI / Analytics Leadership</p>
+          <p class="hero-value">
+            Operations leader who turns messy data into decision systems —
+            dashboards, forecasting, and process automation that cut cost and raise accuracy.
+          </p>
+          <div class="hero-ctas">
+            <a class="btn btn-primary" href="mailto:jterranova2@gmail.com">Email</a>
+            <a class="btn btn-ghost" href="https://www.linkedin.com/in/justinterranova/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+            <a class="btn btn-ghost" href="resume.html">Resume</a>
+          </div>
         </div>
-        <h1>Justin Terranova</h1>
-        <p class="hero-tagline">Operations Leader · Analytics / BI · Project Management</p>
-        <blockquote class="quote">
-          “Climb mountains not so the world can see you, but so you can see the world”
-          <cite>— David McCullough Jr.</cite>
-        </blockquote>
-        <div class="social-row">
-          <a class="social-btn" href="mailto:jterranova2@gmail.com">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
-            Email
-          </a>
-          <a class="social-btn" href="https://www.linkedin.com/in/justinterranova/" target="_blank" rel="noopener noreferrer">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14zm-11 14v-7H5v7h3zm-1.5-8.25A1.75 1.75 0 1 0 6.5 5a1.75 1.75 0 0 0 0 3.75zM18 17v-4.2c0-2.2-1.2-3.2-2.8-3.2-1.3 0-1.9.7-2.2 1.2V10h-3s.04 7 0 7h3v-3.9c0-.2 0-.4.1-.5.2-.4.6-.9 1.3-.9.9 0 1.3.7 1.3 1.7V17h3.3z"/></svg>
-            LinkedIn
-          </a>
-          <a class="social-btn" href="https://twitter.com/justinterranova/" target="_blank" rel="noopener noreferrer">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.727-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z"/></svg>
-            Twitter
-          </a>
+        <div class="hero-portrait reveal" style="--d: 80ms">
+          <div class="portrait-frame">
+            <img
+              src="assets/justin-suit.jpg"
+              alt="Justin Terranova in a suit"
+              width="1055"
+              height="900"
+            />
+          </div>
+          <div class="portrait-meta mono">
+            <span>San Jose / Los Gatos</span>
+            <span>Available for ops &amp; analytics leadership</span>
+          </div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="card-grid" aria-label="Explore">
-        <a class="card" href="about.html">
-          <div class="card-media about" data-label="About"></div>
-          <div class="card-body">
-            <h2>About</h2>
-            <p>Leadership philosophy, first-principles problem solving, and 18+ years of operational experience.</p>
+    <!-- KPI STRIP -->
+    <section class="section kpi-section" id="impact">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-num mono">01</span>
+          <h2>Impact</h2>
+          <p>Selected metrics from roles across logistics, events, and analytics programs.</p>
+        </div>
+        <div class="kpi-strip">
+          <article class="kpi-card glass-card reveal" style="--d: 0ms" data-spotlight>
+            <span class="kpi-value mono" data-count="18" data-suffix="+">0</span>
+            <span class="kpi-label">Years leadership</span>
+          </article>
+          <article class="kpi-card glass-card reveal" style="--d: 60ms" data-spotlight>
+            <span class="kpi-value mono" data-count="99" data-suffix="%">0</span>
+            <span class="kpi-label">Inventory accuracy <span class="kpi-note">from 75%</span></span>
+          </article>
+          <article class="kpi-card glass-card reveal" style="--d: 120ms" data-spotlight>
+            <span class="kpi-value mono" data-prefix="$" data-count="2.3" data-decimals="1" data-suffix="M">$0</span>
+            <span class="kpi-label">Annual savings <span class="kpi-note">load-list errors</span></span>
+          </article>
+          <article class="kpi-card glass-card reveal" style="--d: 180ms" data-spotlight>
+            <span class="kpi-value mono" data-count="35" data-suffix="%">0</span>
+            <span class="kpi-label">Labor cost reduction</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- CAPABILITIES BENTO -->
+    <section class="section" id="capabilities">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-num mono">02</span>
+          <h2>Capabilities</h2>
+          <p>How I lead teams and ship analytical systems that operators actually use.</p>
+        </div>
+        <div class="bento">
+          <article class="bento-card glass-card reveal" style="--d: 0ms" data-spotlight>
+            <span class="bento-num mono">01</span>
+            <h3>Leadership</h3>
+            <p>Build accountability systems for supervisors and large hourly teams — clear targets, coaching loops, and urgency without chaos.</p>
+          </article>
+          <article class="bento-card glass-card reveal" style="--d: 60ms" data-spotlight>
+            <span class="bento-num mono">02</span>
+            <h3>BI / Analytics systems</h3>
+            <p>Design Power BI, SQL, Excel/VBA, and Tableau workflows that turn operational noise into WOR/DOR reporting and decision-ready dashboards.</p>
+          </article>
+          <article class="bento-card glass-card reveal" style="--d: 120ms" data-spotlight>
+            <span class="bento-num mono">03</span>
+            <h3>Ops excellence</h3>
+            <p>Inventory accuracy, route compliance, labor forecasting, and Six Sigma / Kaizen programs that protect safety and throughput.</p>
+          </article>
+          <article class="bento-card glass-card reveal" style="--d: 180ms" data-spotlight>
+            <span class="bento-num mono">04</span>
+            <h3>Cross-functional delivery</h3>
+            <p>Partner with executives, field operators, and engineering to ship programs spanning ERP, fleet, and multi-site logistics.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- SELECTED OUTCOMES -->
+    <section class="section" id="outcomes">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-num mono">03</span>
+          <h2>Selected outcomes</h2>
+          <p>Problem → approach → result, drawn from live operational roles.</p>
+        </div>
+        <div class="outcome-grid">
+          <article class="outcome-card glass-card reveal" style="--d: 0ms" data-spotlight>
+            <p class="outcome-org mono">CEVA Logistics · Tesla contract</p>
+            <h3>Inventory from 75% → 99%</h3>
+            <dl class="outcome-flow">
+              <div><dt>Problem</dt><dd>High inventory variance (&gt;$0.3M) and accuracy risk on a Tesla logistics site.</dd></div>
+              <div><dt>Approach</dt><dd>Led 16 directs and 250+ associates; drove Six Sigma Kaizen; tightened cycle counts and control.</dd></div>
+              <div><dt>Outcome</dt><dd>Accuracy to 99%; variance to &lt;$5k monthly; three regional Kaizen wins; zero line-down for Tesla.</dd></div>
+            </dl>
+          </article>
+          <article class="outcome-card glass-card reveal" style="--d: 80ms" data-spotlight>
+            <p class="outcome-org mono">Arena Stuart Events</p>
+            <h3>35% average monthly labor cost cut</h3>
+            <dl class="outcome-flow">
+              <div><dt>Problem</dt><dd>Labor spend and planning lacked a repeatable operating rhythm.</dd></div>
+              <div><dt>Approach</dt><dd>Built a Weekly Ops Planning System, automated labor forecasting, and a structural load-list calculator.</dd></div>
+              <div><dt>Outcome</dt><dd>35% average monthly labor cost reduction while improving planning discipline.</dd></div>
+            </dl>
+          </article>
+          <article class="outcome-card glass-card reveal" style="--d: 160ms" data-spotlight>
+            <p class="outcome-org mono">MSC · Vessel Reconciliation</p>
+            <h3>$2.3M savings via error reduction</h3>
+            <dl class="outcome-flow">
+              <div><dt>Problem</dt><dd>Load-list errors were driving costly rework across vessel reconciliation.</dd></div>
+              <div><dt>Approach</dt><dd>Built MsClean VB automation; led Excel help desk/training for 7 directs and 45+ indirects.</dd></div>
+              <div><dt>Outcome</dt><dd>88% load-list error reduction (~$2.3M annual savings in 2009).</dd></div>
+            </dl>
+          </article>
+          <article class="outcome-card glass-card reveal" style="--d: 240ms" data-spotlight>
+            <p class="outcome-org mono">Peaxy Inc.</p>
+            <h3>BI that cut labor cost 15%</h3>
+            <dl class="outcome-flow">
+              <div><dt>Problem</dt><dd>Leadership needed clearer operational visibility to manage cost.</dd></div>
+              <div><dt>Approach</dt><dd>Partnered with VP Ops and CEO; built BI dashboards and large-dataset visualization.</dd></div>
+              <div><dt>Outcome</dt><dd>Dashboards contributed to a 15% labor cost reduction.</dd></div>
+            </dl>
+          </article>
+          <article class="outcome-card glass-card reveal" style="--d: 320ms" data-spotlight>
+            <p class="outcome-org mono">United Site Services</p>
+            <h3>Route compliance 92% → 98%</h3>
+            <dl class="outcome-flow">
+              <div><dt>Problem</dt><dd>High-volume branch ops needed tighter compliance and fleet control.</dd></div>
+              <div><dt>Approach</dt><dd>Led 10,000+ services/week across 5 departments; managed supervisors, 60 indirects, 80+ vehicle fleet.</dd></div>
+              <div><dt>Outcome</dt><dd>Route compliance to 98%; seven months with zero safety incidents.</dd></div>
+            </dl>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- EXPERIENCE TIMELINE -->
+    <section class="section" id="experience">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-num mono">04</span>
+          <h2>Experience</h2>
+          <p>Compact timeline — full detail on the <a href="resume.html">resume</a>.</p>
+        </div>
+        <ol class="timeline">
+          <li class="timeline-item reveal" style="--d: 0ms">
+            <time class="mono">Jan 2024 – Present</time>
+            <div>
+              <h3>Project Manager 3 — Analytics / BI Developer</h3>
+              <p class="timeline-meta">PG&amp;E via Insight Global / Evergreen · San Jose</p>
+              <p>Primary BI for paving analytics — WOR/DOR, Construction Manager Dashboard, cycle-time analytics; PgClean invoice reconciliation.</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 40ms">
+            <time class="mono">Jul 2023 – Jan 2024</time>
+            <div>
+              <h3>Operations / Branch Manager</h3>
+              <p class="timeline-meta">United Site Services · San Jose</p>
+              <p>10,000+ services/week; route compliance 92%→98%; zero safety incidents for seven months.</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 80ms">
+            <time class="mono">Sep 2021 – Jul 2023</time>
+            <div>
+              <h3>Senior Program Manager</h3>
+              <p class="timeline-meta">Peaxy Inc.</p>
+              <p>Executive partnership on ops priorities; BI dashboards contributing to 15% labor cost reduction.</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 120ms">
+            <time class="mono">May 2019 – Aug 2021</time>
+            <div>
+              <h3>Director of Operations</h3>
+              <p class="timeline-meta">Arena Stuart Events · Milpitas</p>
+              <p>35% avg monthly labor cost reduction; Weekly Ops Planning System; automated forecasting.</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 160ms">
+            <time class="mono">Apr 2018 – May 2019</time>
+            <div>
+              <h3>Operations Manager (Tesla Contract)</h3>
+              <p class="timeline-meta">CEVA Logistics · Hayward</p>
+              <p>250+ associates; inventory 75%→99%; variance &lt;$5k/mo; zero line-down.</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 200ms">
+            <time class="mono">Mar 2017 – Apr 2018</time>
+            <div>
+              <h3>Project Manager</h3>
+              <p class="timeline-meta">Peaxy</p>
+              <p>Programs up to $8M annualized revenue; teams of up to 50 developers; ERP project accounting.</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 240ms">
+            <time class="mono">Jul 2012 – Mar 2017</time>
+            <div>
+              <h3>National Equipment Operations Manager</h3>
+              <p class="timeline-meta">MSC · New York</p>
+              <p>8 direct / 50 indirect; fleet maintenance costs −16% from 2013–2015 (&gt;$3M).</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 280ms">
+            <time class="mono">Jul 2008 – Jul 2012</time>
+            <div>
+              <h3>National Vessel Reconciliation Manager</h3>
+              <p class="timeline-meta">MSC</p>
+              <p>MsClean automation; 88% load-list error reduction (~$2.3M annual savings).</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 320ms">
+            <time class="mono">May 2007 – Jul 2008</time>
+            <div>
+              <h3>Import Logistics Manager</h3>
+              <p class="timeline-meta">Dachser Logistics · Valley Stream, NY</p>
+            </div>
+          </li>
+          <li class="timeline-item reveal" style="--d: 360ms">
+            <time class="mono">Mar 2006 – Apr 2007</time>
+            <div>
+              <h3>Air Export Supervisor</h3>
+              <p class="timeline-meta">Militzer &amp; Munch · Frankfurt, DE</p>
+            </div>
+          </li>
+        </ol>
+        <p class="edu-line reveal mono">Education · B.A. Art · Washington College · Chestertown, MD · 2001–2005</p>
+      </div>
+    </section>
+
+    <!-- STACK -->
+    <section class="section" id="stack">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-num mono">05</span>
+          <h2>Tools &amp; stack</h2>
+          <p>Technical line from professional experience.</p>
+        </div>
+        <ul class="chip-row reveal">
+          <li>Microsoft Excel</li>
+          <li>VBA</li>
+          <li>Power BI</li>
+          <li>SQL</li>
+          <li>Tableau</li>
+          <li>Google Data Studio</li>
+          <li>Intacct</li>
+          <li>ERP systems</li>
+          <li>Performance dashboards</li>
+          <li>Lean Six Sigma</li>
+          <li>Kaizen</li>
+          <li>WMS</li>
+        </ul>
+        <p class="stack-more reveal"><a href="skills.html">Full skills inventory →</a></p>
+      </div>
+    </section>
+
+    <!-- CONTACT -->
+    <section class="section contact-section" id="contact">
+      <div class="container">
+        <div class="contact-panel glass-card reveal" data-spotlight>
+          <span class="section-num mono">06</span>
+          <h2>Let’s talk operations</h2>
+          <p>Open to conversations about ops leadership, BI/analytics programs, and process automation.</p>
+          <div class="hero-ctas">
+            <a class="btn btn-primary" href="mailto:jterranova2@gmail.com">jterranova2@gmail.com</a>
+            <a class="btn btn-ghost" href="tel:+14085606987">(408) 560-6987</a>
+            <a class="btn btn-ghost" href="https://www.linkedin.com/in/justinterranova/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
           </div>
-          <div class="card-cta">Learn more →</div>
-        </a>
-        <a class="card" href="resume.html">
-          <div class="card-media resume" data-label="Resume"></div>
-          <div class="card-body">
-            <h2>Resume</h2>
-            <p>Full career history — PG&amp;E analytics, site services, Peaxy, Tesla logistics, MSC, and more.</p>
-          </div>
-          <div class="card-cta">View resume →</div>
-        </a>
-        <a class="card" href="skills.html">
-          <div class="card-media skills" data-label="Skills"></div>
-          <div class="card-body">
-            <h2>Skills</h2>
-            <p>BI, operations, supply chain, Lean Six Sigma, Excel/VBA/Power BI, and leadership competencies.</p>
-          </div>
-          <div class="card-cta">See skills →</div>
-        </a>
-      </section>
-    </div>
+          <p class="contact-loc mono">17224 Debbie Road · Los Gatos, CA 95033</p>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer class="site-footer">
-    <p>© <span id="y"></span> Justin Terranova · <a href="mailto:jterranova2@gmail.com">jterranova2@gmail.com</a> · (408) 560-6987</p>
+    <p>© <span id="y"></span> Justin Terranova · <a href="about.html">About</a> · <a href="resume.html">Resume</a> · <a href="skills.html">Skills</a></p>
   </footer>
-  <script src="nav.js"></script>
-  <script>document.getElementById("y").textContent = new Date().getFullYear();</script>
+  <script src="script.js"></script>
 </body>
 </html>
