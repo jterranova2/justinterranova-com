@@ -314,12 +314,6 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
 .hero {
   padding: 3rem 0 2rem;
 }
-.hero-grid {
-  display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
-  gap: 3rem;
-  align-items: center;
-}
 .eyebrow {
   font-size: 0.78rem;
   color: var(--accent);
@@ -348,10 +342,12 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
   line-height: 1.7;
 }
 
+.hero-portrait {
+  margin: 1rem 0 1.5rem;
+}
 .portrait-frame {
-  width: min(100%, 340px);
-  margin-left: auto;
-  aspect-ratio: 3 / 4;
+  width: min(100%, 280px);
+  aspect-ratio: 1 / 1;
   border-radius: 18px;
   overflow: hidden;
   border: 1px solid var(--border-strong);
@@ -368,9 +364,8 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
   object-position: 50% 8%;
 }
 .portrait-meta {
-  margin-top: 1rem;
-  margin-left: auto;
-  width: min(100%, 340px);
+  margin-top: 0.85rem;
+  width: min(100%, 280px);
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -779,15 +774,6 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
 
 /* —— Responsive —— */
 @media (max-width: 960px) {
-  .hero-grid {
-    grid-template-columns: 1fr;
-    gap: 2rem;
-  }
-  .portrait-frame,
-  .portrait-meta {
-    margin-left: 0;
-    margin-right: auto;
-  }
   .kpi-strip { grid-template-columns: repeat(2, 1fr); }
   .outcome-grid { grid-template-columns: 1fr; }
   .outcome-card:last-child:nth-child(odd) { grid-column: auto; }
