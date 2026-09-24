@@ -853,6 +853,14 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
 .portfolio-hero .page-lead {
   margin-bottom: 0.5rem;
 }
+.portfolio-coming-soon {
+  padding: 2.5rem 1.5rem;
+  margin-bottom: 2rem;
+  text-align: center;
+}
+.portfolio-coming-soon .eyebrow {
+  margin-bottom: 0.5rem;
+}
 
 .ja-intro {
   padding: 1.5rem 1.5rem;
