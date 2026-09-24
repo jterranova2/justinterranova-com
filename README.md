@@ -36,5 +36,4 @@ GitHub Pages (or Cloudflare Pages / Netlify) from `main` — publish the site ro
 ## Contact
 
 - Email: [jterranova2@gmail.com](mailto:jterranova2@gmail.com)
-- Phone: (408) 560-6987
 - LinkedIn: [linkedin.com/in/justinterranova](https://www.linkedin.com/in/justinterranova/)
