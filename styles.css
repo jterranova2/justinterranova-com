@@ -807,7 +807,7 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
   .bento { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .nav-toggle { display: flex; }
   .nav-links {
     display: none;
@@ -825,6 +825,9 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
   .nav-links.open { display: flex; }
   .nav-links a { padding: 0.75rem 1rem; }
   .nav-links a.nav-cta { margin-left: 0; }
+}
+
+@media (max-width: 720px) {
   .brand-name { display: none; }
   .kpi-strip { grid-template-columns: 1fr 1fr; }
   .contact-panel { padding: 1.5rem 1.25rem; }
