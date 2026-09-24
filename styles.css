@@ -345,6 +345,22 @@ body.has-pointer .glass-card:hover::before { opacity: 1; }
 .hero-portrait {
   margin: 1rem 0 1.5rem;
 }
+@media (min-width: 900px) {
+  .hero-copy {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    grid-template-areas:
+      "eyebrow eyebrow"
+      "name    name"
+      "photo   intro";
+    column-gap: 3rem;
+    align-items: center;
+  }
+  .hero-copy .eyebrow { grid-area: eyebrow; }
+  .hero-copy h1 { grid-area: name; }
+  .hero-portrait { grid-area: photo; margin-bottom: 0; }
+  .hero-intro { grid-area: intro; }
+}
 .portrait-frame {
   width: min(100%, 280px);
   aspect-ratio: 1 / 1;
