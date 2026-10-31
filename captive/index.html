@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Captive — Prototype 1</title>
+<meta name="robots" content="noindex, nofollow">
+<style>
+  :root { --ink: #f3ece2; --dim: rgba(243,236,226,.7); --panel: rgba(18,14,10,.62); --accent: #d9a35b; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: #000; color: var(--ink);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow: hidden; touch-action: none; }
+  #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #desk { position: fixed; inset: 0; background: linear-gradient(#4b4038, #2a221c 55%, #6b513a 55%, #8a6a4a); }
+  canvas { position: fixed; inset: 0; }
+  #start { position: fixed; inset: 0; display: grid; place-items: center; background: #0d0a08; z-index: 5; text-align: center; padding: 24px; }
+  #start h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: .02em; }
+  #start p { color: var(--dim); max-width: 32ch; margin: 0 auto 20px; }
+  button { font: inherit; color: #1a120a; background: var(--accent); border: 0; border-radius: 999px; padding: 12px 22px; font-weight: 600; }
+  #ui { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; background: var(--panel);
+    padding: 12px max(16px, env(safe-area-inset-left)) calc(12px + env(safe-area-inset-bottom)); display: grid; gap: 8px; }
+  #ui label { display: grid; grid-template-columns: 7.5em 1fr 3.5em; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); }
+  #ui input { width: 100%; }
+  #ui .row { display: flex; gap: 8px; justify-content: space-between; align-items: center; }
+  #ui button { padding: 8px 14px; font-size: 13px; }
+  #msg { font-size: 12px; color: var(--dim); }
+</style>
+</head>
+<body>
+<video id="cam" playsinline muted autoplay hidden></video>
+<div id="desk" hidden></div>
+
+<div id="start">
+  <div>
+    <h1>Captive</h1>
+    <p>Point your phone at your desk. Someone very small is there.</p>
+    <button id="go">Start camera</button>
+  </div>
+</div>
+
+<div id="ui" hidden>
+  <label>Distance <input id="dist" type="range" min="20" max="120" value="45"><span id="distv"></span></label>
+  <label>Desk below cam <input id="drop" type="range" min="5" max="80" value="30"><span id="dropv"></span></label>
+  <div class="row"><span id="msg">Turn the phone, don't walk.</span><button id="recenter">Put her in front of me</button></div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+// Microsoft Rocketbox "Female_Adult_01" (MIT license), textures shrunk to 1024px
+const MODEL_DIR = 'models/f01/';
+const HEIGHT_M = 0.15;               // she stands 15 cm tall
+
+const $ = id => document.getElementById(id);
+
+// ---------- renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 20);
+
+// soft, warm room light: strong sky fill, gentle key, so she sits in the room instead of on a stage
+scene.add(new THREE.HemisphereLight(0xfff1e0, 0x4a3a2c, 1.5));
+const key = new THREE.DirectionalLight(0xffe9d2, 1.5);
+key.castShadow = true;
+key.shadow.mapSize.set(1024, 1024);
+key.shadow.camera.near = 0.1; key.shadow.camera.far = 3;
+key.shadow.camera.left = key.shadow.camera.bottom = -0.2;
+key.shadow.camera.right = key.shadow.camera.top = 0.2;
+key.shadow.radius = 4;
+key.shadow.bias = -0.0005;
+scene.add(key, key.target);
+
+// "stage" = her spot on the desk; everything about her hangs off it
+const stage = new THREE.Group();
+scene.add(stage);
+
+// invisible desk surface that only receives her shadow
+const shadowCatcher = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShadowMaterial({ opacity: 0.38 }));
+shadowCatcher.rotation.x = -Math.PI / 2;
+shadowCatcher.receiveShadow = true;
+stage.add(shadowCatcher);
+
+// soft contact shadow right under her feet, so she never looks like she floats
+const blobTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), r = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  r.addColorStop(0, 'rgba(0,0,0,.55)'); r.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+const blob = new THREE.Mesh(new THREE.PlaneGeometry(0.07, 0.045), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false }));
+blob.rotation.x = -Math.PI / 2; blob.position.y = 0.0005;
+stage.add(blob);
+
+// ---------- her textures ----------
+const texLoader = new THREE.TextureLoader();
+const loadTex = (file, color) => {
+  const t = texLoader.load(MODEL_DIR + file);
+  if (color) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+};
+
+// Wear her clothes down: faded, stained blouse, dirty jeans, a film of grime over everything.
+function captiveClothes(tex) {
+  const img = tex.image, c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height), p = d.data;
+  for (let i = 0; i < p.length; i += 4) {
+    const r = p[i], gr = p[i + 1], b = p[i + 2], max = Math.max(r, gr, b), min = Math.min(r, gr, b);
+    const sat = max ? (max - min) / max : 0, lum = (r + gr + b) / 3;
+    let h = 0;
+    if (max !== min) h = max === r ? 60 * ((gr - b) / (max - min)) : max === gr ? 60 * (2 + (b - r) / (max - min)) : 60 * (4 + (r - gr) / (max - min));
+    if (h < 0) h += 360;
+    const x = (i / 4) % c.width, y = (i / 4 / c.width) | 0;
+    const grime = 0.8 + 0.2 * Math.sin(x * 0.05 + Math.sin(y * 0.04) * 3) * Math.sin(y * 0.07 + x * 0.011);
+    let R = r, G = gr, B = b;
+    if ((h > 290 || h < 6) && sat > 0.2) {             // pink blouse -> faded, dusty
+      R = lum * 1.05 + 12; G = lum * 0.95 + 4; B = lum * 0.85;
+    } else if (h > 190 && h < 250 && sat > 0.15) {     // jeans -> washed-out, dirty denim
+      R = lum * 0.85 + 8; G = lum * 0.88 + 8; B = lum * 0.95 + 4;
+    }
+    p[i] = R * grime; p[i + 1] = G * grime; p[i + 2] = B * grime;
+  }
+  g.putImageData(d, 0, 0);
+  const out = new THREE.CanvasTexture(c);
+  out.colorSpace = THREE.SRGBColorSpace; out.flipY = tex.flipY;
+  return out;
+}
+
+// ---------- the woman ----------
+let woman = null, mesh = null, bones = {}, rest = {}, morph = {};
+// Pose names (left) -> her skeleton's bone names (3ds Max Biped)
+const RIG = {
+  Hips: 'Bip01_Pelvis', Spine: 'Bip01_Spine', Spine1: 'Bip01_Spine1', Spine2: 'Bip01_Spine2',
+  Neck: 'Bip01_Neck', Head: 'Bip01_Head',
+  LeftArm: 'Bip01_L_UpperArm', LeftForeArm: 'Bip01_L_Forearm', LeftHand: 'Bip01_L_Hand',
+  RightArm: 'Bip01_R_UpperArm', RightForeArm: 'Bip01_R_Forearm', RightHand: 'Bip01_R_Hand',
+  LeftUpLeg: 'Bip01_L_Thigh', LeftLeg: 'Bip01_L_Calf', LeftFoot: 'Bip01_L_Foot', LeftToe: 'Bip01_L_Toe0',
+  RightUpLeg: 'Bip01_R_Thigh', RightLeg: 'Bip01_R_Calf', RightFoot: 'Bip01_R_Foot', RightToe: 'Bip01_R_Toe0',
+};
+
+const manager = new THREE.LoadingManager();
+manager.setURLModifier(u => /\.tga$/i.test(u) ? 'data:,' : u);   // we supply our own shrunken textures
+new FBXLoader(manager).load(MODEL_DIR + 'f01.fbx', fbx => {
+  woman = fbx;
+  const mats = {
+    f001_body: new THREE.MeshStandardMaterial({ normalMap: loadTex('body_normal.jpg'), roughness: 0.85 }),
+    f001_head: new THREE.MeshStandardMaterial({ map: loadTex('head_color.jpg', true), normalMap: loadTex('head_normal.jpg'), roughness: 0.6 }),
+    f001_opacity: new THREE.MeshStandardMaterial({ map: loadTex('opacity.png', true), alphaTest: 0.35, side: THREE.DoubleSide, roughness: 0.7 }),
+  };
+  // once the body texture arrives, repaint it worn and dirty
+  texLoader.load(MODEL_DIR + 'body_color.jpg', t => { mats.f001_body.map = captiveClothes(t); mats.f001_body.needsUpdate = true; });
+  fbx.traverse(o => {
+    if (o.isMesh) {
+      o.material = [].concat(o.material).map(m => mats[m.name] || m);
+      o.castShadow = true; o.frustumCulled = false;
+      if (o.morphTargetDictionary) {
+        mesh = o;
+        for (const [k, i] of Object.entries(o.morphTargetDictionary)) morph[k.replace(/^.*\./, '')] = i;
+      }
+    }
+  });
+  for (const [pose, name] of Object.entries(RIG)) {
+    const b = fbx.getObjectByName(name);
+    if (b) { bones[pose] = b; rest[pose] = b.quaternion.clone(); }
+  }
+  woman.scale.setScalar(HEIGHT_M / 174);    // model is 174 cm tall in its own units
+  stage.add(woman);
+  window.__bones = bones; window.__morph = morph; window.__mesh = mesh;
+}, undefined, e => { $('msg').textContent = 'Could not load her model: ' + e.message; });
+
+// ---------- frightened stance ----------
+// Each limb is aimed along a direction in HER body frame:
+// x = her left, y = up, z = the way she faces. Works for any skeleton.
+const AIM = [
+  ['LeftArm',     'LeftForeArm', [ 0.22, -0.88,  0.42]],   // upper arms tucked in, a little forward
+  ['RightArm',    'RightForeArm',[-0.22, -0.88,  0.42]],
+  ['LeftForeArm', 'LeftHand',    [-0.55,  0.62,  0.56]],   // forearms folded up, hands at her chest
+  ['RightForeArm','RightHand',   [ 0.55,  0.62,  0.56]],
+  ['LeftUpLeg',   'LeftLeg',     [ 0.04, -0.94,  0.34]],   // knees bent, ready to bolt
+  ['RightUpLeg',  'RightLeg',    [-0.04, -0.94,  0.34]],
+  ['LeftLeg',     'LeftFoot',    [ 0.02, -0.95, -0.30]],
+  ['RightLeg',    'RightFoot',   [-0.02, -0.95, -0.30]],
+];
+const BEND = { Spine: 0.22, Spine1: 0.14, Spine2: 0.08, Neck: -0.45 };   // hunched forward, chin up to watch (radians)
+// Fear on her face (0..1 per expression control)
+const FEAR = {
+  AK_03_BrowInnerUp: 0.9, AK_04_BrowOuterUpLeft: 0.45, AK_05_BrowOuterUpRight: 0.45,
+  AK_21_EyeWideLeft: 0.75, AK_22_EyeWideRight: 0.75,
+  AK_46_MouthStretchLeft: 0.45, AK_47_MouthStretchRight: 0.45, AK_25_JawOpen: 0.12,
+};
+window.__AIM = AIM; window.__BEND = BEND; window.__FEAR = FEAR; window.__stage = stage; window.__cam = camera;
+
+const tmpQ = new THREE.Quaternion(), bodyQ = new THREE.Quaternion(), parQ = new THREE.Quaternion(),
+      vRest = new THREE.Vector3(), vWant = new THREE.Vector3(), axis = new THREE.Vector3(),
+      toeL = new THREE.Vector3(), toeR = new THREE.Vector3(), stW = new THREE.Vector3();
+// rotate a bone (from its rest pose) about an axis given in her body frame
+function turn(name, ax, angle) {
+  const b = bones[name]; if (!b) return;
+  b.parent.getWorldQuaternion(parQ);
+  axis.set(...ax).applyQuaternion(bodyQ).applyQuaternion(parQ.invert());
+  b.quaternion.copy(tmpQ.setFromAxisAngle(axis, angle)).multiply(rest[name]);
+  b.updateMatrixWorld(true);
+}
+function aim(name, childName, dir) {
+  const b = bones[name], c = bones[childName]; if (!b || !c) return;
+  b.parent.getWorldQuaternion(parQ).invert();
+  vRest.copy(c.position).normalize().applyQuaternion(rest[name]);          // limb direction at rest, parent space
+  vWant.set(...dir).normalize().applyQuaternion(bodyQ).applyQuaternion(parQ);
+  b.quaternion.setFromUnitVectors(vRest, vWant).multiply(rest[name]);
+  b.updateMatrixWorld(true);
+}
+let nextBlink = 2, blinkT = -1;
+function pose(t) {
+  if (!woman) return;
+  const shiver = Math.sin(t * 38) * 0.012 + Math.sin(t * 23.7) * 0.008;   // fine trembling
+  const breath = Math.sin(t * 7.5) * 0.035;                                // fast, shallow breaths
+  const glance = Math.sin(t * 0.7) * 0.5 + Math.sin(t * 1.9) * 0.15;       // nervous looking around
+  woman.rotation.y = Math.sin(t * 0.31) * 0.15;                            // shifting weight
+  woman.updateMatrixWorld(true);
+  woman.getWorldQuaternion(bodyQ);                                         // her facing (model is y-up, faces +z)
+  for (const [n, x] of Object.entries(BEND)) turn(n, [1, 0, 0], x + (n === 'Spine1' ? breath : 0));
+  bones.Head && (bones.Head.parent.getWorldQuaternion(parQ),               // look around, nod with the shiver
+    bones.Head.quaternion.copy(rest.Head)
+      .premultiply(tmpQ.setFromAxisAngle(axis.set(0, 1, 0).applyQuaternion(bodyQ).applyQuaternion(parQ.clone().invert()), glance))
+      .premultiply(tmpQ.setFromAxisAngle(axis.set(1, 0, 0).applyQuaternion(bodyQ).applyQuaternion(parQ.invert()), shiver * 2)),
+    bones.Head.updateMatrixWorld(true));
+  for (const [n, c, d] of AIM) aim(n, c, [d[0] + shiver, d[1], d[2]]);
+  // face: fear, plus blinks and darting eyes
+  if (mesh) {
+    const inf = mesh.morphTargetInfluences;
+    for (const [k, v] of Object.entries(FEAR)) if (morph[k] !== undefined) inf[morph[k]] = v;
+    if (t > nextBlink) { blinkT = t; nextBlink = t + 1.5 + Math.random() * 3; }
+    const bl = blinkT >= 0 && t - blinkT < 0.16 ? Math.sin((t - blinkT) / 0.16 * Math.PI) : 0;
+    for (const k of ['AK_09_EyeBlinkLeft', 'AK_10_EyeBlinkRight']) if (morph[k] !== undefined) inf[morph[k]] = bl;
+    const eyes = Math.sin(t * 1.3) * 0.5 + Math.sin(t * 3.1) * 0.3;
+    if (morph.AU_61_EyesTurnLeft !== undefined) {
+      inf[morph.AU_61_EyesTurnLeft] = Math.max(0, eyes); inf[morph.AU_62_EyesTurnRight] = Math.max(0, -eyes);
+    }
+  }
+  // keep her feet on the desk however much her knees bend
+  if (bones.LeftToe && bones.RightToe) {
+    bones.LeftToe.getWorldPosition(toeL); bones.RightToe.getWorldPosition(toeR);
+    stage.getWorldPosition(stW);
+    woman.position.y -= Math.min(toeL.y, toeR.y) - stW.y - 0.0008;
+  }
+}
+
+// ---------- placing her ----------
+const fwd = new THREE.Vector3();
+function placeAt(x, z, h) {
+  stage.position.set(x, -h, z);
+  stage.lookAt(0, -h, 0);            // she faces you, roughly
+  key.position.copy(stage.position).add(new THREE.Vector3(0.25, 1, 0.15));
+  key.target.position.copy(stage.position);
+}
+function placeInFront() {
+  camera.getWorldDirection(fwd); fwd.y = 0;
+  if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
+  fwd.normalize();
+  const d = $('dist').value / 100;
+  placeAt(fwd.x * d, fwd.z * d, $('drop').value / 100);
+}
+function syncLabels() {
+  $('distv').textContent = $('dist').value + ' cm';
+  $('dropv').textContent = $('drop').value + ' cm';
+}
+['dist', 'drop'].forEach(id => $(id).addEventListener('input', () => {
+  syncLabels();
+  const flat = new THREE.Vector3(stage.position.x, 0, stage.position.z).normalize(), d = $('dist').value / 100;
+  placeAt(flat.x * d, flat.z * d, $('drop').value / 100);
+}));
+$('recenter').onclick = placeInFront;
+syncLabels();
+
+// ---------- looking around: phone gyro, or mouse drag on desktop ----------
+let gyro = null;
+addEventListener('deviceorientation', e => { if (e.alpha !== null) gyro = e; });
+const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));   // camera looks out the back of the phone
+const zee = new THREE.Vector3(0, 0, 1), qz = new THREE.Quaternion(), eul = new THREE.Euler();
+function applyGyro() {
+  const D = THREE.MathUtils.DEG2RAD;
+  const orient = (screen.orientation?.angle ?? window.orientation ?? 0) * D;
+  eul.set(gyro.beta * D, gyro.alpha * D, -gyro.gamma * D, 'YXZ');
+  camera.quaternion.setFromEuler(eul).multiply(q1).multiply(qz.setFromAxisAngle(zee, -orient));
+}
+let yaw = 0.35, pitch = -0.45, drag = null;     // desktop: start looking a little off to the side
+addEventListener('pointerdown', e => { if (!gyro && e.target === renderer.domElement) drag = [e.clientX, e.clientY]; });
+addEventListener('pointerup', () => drag = null);
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  yaw += (e.clientX - drag[0]) * 0.004; pitch += (e.clientY - drag[1]) * 0.004;
+  pitch = THREE.MathUtils.clamp(pitch, -1.4, 1.2); drag = [e.clientX, e.clientY];
+});
+
+// ---------- start ----------
+$('go').onclick = async () => {
+  try {   // iOS asks for motion permission, and only from a tap
+    if (typeof DeviceOrientationEvent?.requestPermission === 'function') await DeviceOrientationEvent.requestPermission();
+  } catch {}
+  try {
+    if (location.search.includes('desk')) throw new Error('desk preview');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    $('cam').srcObject = stream; $('cam').hidden = false; await $('cam').play();
+  } catch (e) {
+    $('desk').hidden = false;   // no camera (e.g. desktop): fake desk backdrop, drag to look
+    $('msg').textContent = 'No camera found. Drag to look around.';
+  }
+  $('start').hidden = true; $('ui').hidden = false;
+  setTimeout(() => { camera.updateMatrixWorld(); placeInFront(); }, 400);   // let the gyro report first
+};
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  if (gyro) applyGyro(); else camera.quaternion.setFromEuler(eul.set(pitch, -yaw, 0, 'YXZ'));
+  pose(clock.getElapsedTime());
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
