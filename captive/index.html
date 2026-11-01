@@ -241,27 +241,56 @@ function aim(name, childName, dir) {
   b.updateMatrixWorld(true);
 }
 // ---------- what she's doing: on the desk, held by you, falling ----------
-let state = 'ground', fear = 0.4, stumble = 0, vy = 0, feetY = 0;
-const sway = new THREE.Vector2();
-const holdLocal = new THREE.Vector3(), prevPos = new THREE.Vector3(), vel = new THREE.Vector3(),
-      chestW = new THREE.Vector3(), chestOff = new THREE.Vector3(), lowToe = new THREE.Vector3();
-// Being dangled: legs kicking, arms flailing (same body frame as AIM)
+let state = 'ground', fear = 0.4, stumble = 0, vy = 0, hb = 0;   // hb: 0 = desk pose, 1 = dangling pose (blended)
+const holdLocal = new THREE.Vector3(), gripLocal = new THREE.Vector3(), grabEase = new THREE.Vector3(),
+      gripPrev = new THREE.Vector3(), gripVel = new THREE.Vector3(), gripAcc = new THREE.Vector3(), vel = new THREE.Vector3(),
+      chestW = new THREE.Vector3(), lowToe = new THREE.Vector3(), tmpV = new THREE.Vector3();
+let grabAge = 1, gripFresh = true;
+// She hangs from your fingers like a pendulum: px tilts her forward/back, pz side to side.
+const pend = { x: 0, z: 0, vx: 0, vz: 0 };
+const PEND_L = 0.04, PEND_DAMP = 4.5;                     // 4 cm from your grip to her centre of mass: swings ~2.5x a second
+// Being dangled: hands shoving and prying at the thumb in front of her, now and then breaking
+// into flailing; legs kicking (same body frame and order as AIM)
 function heldAim(t) {
-  const k = Math.sin(t * 9), a = Math.sin(t * 7), b = Math.sin(t * 7 + 1.7);
+  const k = Math.sin(t * 9), a = Math.sin(t * 6), b = Math.sin(t * 6 + 1.7);
+  const flail = Math.max(0, Math.sin(t * 1.1)) ** 2;      // 0 = pushing at your fingers, 1 = flailing
+  const mix = (p, f) => lerp3(p, f, flail);
   return [
-    ['LeftArm',     'LeftForeArm', [ 0.8,  0.25 + 0.4 * a, 0.3]],
-    ['RightArm',    'RightForeArm',[-0.8,  0.25 + 0.4 * b, 0.3]],
-    ['LeftForeArm', 'LeftHand',    [ 0.45, 0.8 + 0.3 * b, 0.35]],
-    ['RightForeArm','RightHand',   [-0.45, 0.8 + 0.3 * a, 0.35]],
+    ['LeftArm',     'LeftForeArm', mix([ 0.45, -0.2 + 0.12 * a, 0.85], [ 0.8, 0.25 + 0.4 * a, 0.3])],
+    ['RightArm',    'RightForeArm',mix([-0.45, -0.2 + 0.12 * b, 0.85], [-0.8, 0.25 + 0.4 * b, 0.3])],
+    ['LeftForeArm', 'LeftHand',    mix([-0.4,  0.35 + 0.15 * b, 0.85], [ 0.45, 0.8 + 0.3 * b, 0.35])],
+    ['RightForeArm','RightHand',   mix([ 0.4,  0.35 + 0.15 * a, 0.85], [-0.45, 0.8 + 0.3 * a, 0.35])],
     ['LeftUpLeg',   'LeftLeg',     [ 0.08, -0.9, 0.2 + 0.5 * k]],
     ['RightUpLeg',  'RightLeg',    [-0.08, -0.9, 0.2 - 0.5 * k]],
     ['LeftLeg',     'LeftFoot',    [ 0.02, -0.9, -0.15 - 0.6 * Math.max(0, k)]],
     ['RightLeg',    'RightFoot',   [-0.02, -0.9, -0.15 - 0.6 * Math.max(0, -k)]],
   ];
 }
+const HELD_BEND = { Spine: 0.14, Spine1: 0.1, Spine2: 0.05, Neck: -0.35 };   // curled toward your fingers, looking up at you
 // Thrown off balance on landing: deep crouch that eases back to the cower
 const CROUCH = { LeftUpLeg: [0.1, -0.55, 0.85], RightUpLeg: [-0.1, -0.55, 0.85], LeftLeg: [0.02, -0.75, -0.65], RightLeg: [-0.02, -0.75, -0.65] };
 const lerp3 = (p, q, s) => [p[0] + (q[0] - p[0]) * s, p[1] + (q[1] - p[1]) * s, p[2] + (q[2] - p[2]) * s];
+
+// Swing physics: your grip's acceleration pushes her body the other way; gravity pulls it back under.
+function swing(dt) {
+  if (state === 'held') {
+    tmpV.copy(gripLocal).sub(gripPrev).divideScalar(dt);
+    if (gripFresh) { tmpV.set(0, 0, 0); gripFresh = false; }
+    gripAcc.lerp(tmpV.clone().sub(gripVel).divideScalar(dt), 0.15);      // smoothed: tracking noise mustn't shake her
+    if (gripAcc.length() > 9) gripAcc.setLength(9);                       // even a violent jerk only swings her so far
+    gripVel.lerp(tmpV, 0.4);
+  } else gripAcc.set(0, 0, 0);
+  gripPrev.copy(gripLocal);
+  const g = state === 'held' ? 9.8 : 0, n = 4, h = dt / n;
+  // past ~35 degrees her shoulders resist, like a real body (soft limit, no dead stop)
+  const limit = a => Math.sign(a) * Math.max(0, Math.abs(a) - 0.6) * 500;
+  for (let i = 0; i < n; i++) {
+    pend.vx += (-(g / PEND_L) * Math.sin(pend.x) + (gripAcc.z / PEND_L) * Math.cos(pend.x) - PEND_DAMP * pend.vx - limit(pend.x)) * h;
+    pend.vz += (-(g / PEND_L) * Math.sin(pend.z) - (gripAcc.x / PEND_L) * Math.cos(pend.z) - PEND_DAMP * pend.vz - limit(pend.z)) * h;
+    if (state !== 'held') { pend.vx -= pend.x * 40 * h; pend.vz -= pend.z * 40 * h; pend.vx *= 0.9; pend.vz *= 0.9; }   // stands back upright
+    pend.x += pend.vx * h; pend.z += pend.vz * h;
+  }
+}
 
 let nextBlink = 2, blinkT = -1;
 function pose(t, dt) {
@@ -269,33 +298,34 @@ function pose(t, dt) {
   const held = state === 'held';
   fear = Math.max(0.4, fear - dt * 0.06);                                  // calms down slowly
   stumble = Math.max(0, stumble - dt * 1.4);
+  hb += ((state === 'ground' ? 0 : 1) - hb) * (1 - Math.exp(-dt * (state === 'ground' ? 7 : 8)));   // poses blend, never snap
   const shiver = (Math.sin(t * 38) * 0.012 + Math.sin(t * 23.7) * 0.008) * (0.6 + fear);   // trembling
   const breath = Math.sin(t * (6 + fear * 4)) * 0.035;                     // fast, shallow breaths
-  const glance = held ? Math.sin(t * 3) * 0.25 : Math.sin(t * 0.7) * 0.5 + Math.sin(t * 1.9) * 0.15;
-  // she faces you; swings like a pendulum when you move her
-  sway.x += (THREE.MathUtils.clamp(vel.z * 2.5, -0.35, 0.35) - sway.x) * 0.1;   // eased, so tracking jitter can't jerk her
-  sway.y += (THREE.MathUtils.clamp(-vel.x * 2.5, -0.35, 0.35) - sway.y) * 0.1;
-  woman.rotation.set(sway.x, Math.sin(t * 0.31) * 0.15, sway.y);
+  const glance = (Math.sin(t * 0.7) * 0.5 + Math.sin(t * 1.9) * 0.15) * (1 - hb) + Math.sin(t * 3) * 0.25 * hb;
+  swing(dt);
+  woman.rotation.set(pend.x, Math.sin(t * 0.31) * 0.15, pend.z);
   woman.updateMatrixWorld(true);
   woman.getWorldQuaternion(bodyQ);                                         // her facing (model is y-up, faces +z)
-  const bend = held ? { Spine: 0.05, Spine1: 0.05, Spine2: 0, Neck: -0.35 } : BEND;
-  for (const [n, x] of Object.entries(bend)) turn(n, [1, 0, 0], x + (n === 'Spine1' ? breath : 0));
+  for (const [n, x] of Object.entries(BEND)) turn(n, [1, 0, 0], x + (HELD_BEND[n] - x) * hb + (n === 'Spine1' ? breath : 0));
   bones.Head && (bones.Head.parent.getWorldQuaternion(parQ),               // look around, nod with the shiver
     bones.Head.quaternion.copy(rest.Head)
       .premultiply(tmpQ.setFromAxisAngle(axis.set(0, 1, 0).applyQuaternion(bodyQ).applyQuaternion(parQ.clone().invert()), glance))
       .premultiply(tmpQ.setFromAxisAngle(axis.set(1, 0, 0).applyQuaternion(bodyQ).applyQuaternion(parQ.invert()), shiver * 2)),
     bones.Head.updateMatrixWorld(true));
-  for (const [n, c, d] of held ? heldAim(t) : AIM) {
-    const dir = [d[0] + shiver, d[1], d[2]];
-    aim(n, c, CROUCH[n] && !held ? lerp3(dir, CROUCH[n], stumble) : dir);
-  }
+  const dangle = heldAim(t);
+  AIM.forEach(([n, c, dg], i) => {
+    const dh = dangle[i][2];
+    let dir = lerp3([dg[0] + shiver, dg[1], dg[2]], [dh[0] + shiver, dh[1], dh[2]], hb);
+    if (CROUCH[n]) dir = lerp3(dir, CROUCH[n], stumble * (1 - hb));
+    aim(n, c, dir);
+  });
   placeBody(dt);
   // face: fear, screaming while held, plus blinks and darting eyes
   if (mesh) {
     const inf = mesh.morphTargetInfluences;
     for (const [k, v] of Object.entries(FEAR)) if (morph[k] !== undefined) inf[morph[k]] = Math.min(1, v * (0.8 + fear * 0.5));
     // mouth opens with her voice; held, it never fully closes
-    const m = Math.max(voice.mouth, held ? 0.35 : 0);
+    const m = Math.max(voice.mouth, 0.35 * hb);
     for (const [k, v] of [['AK_25_JawOpen', 0.1 + m * 0.75], ['AK_46_MouthStretchLeft', 0.4 + m * 0.5], ['AK_47_MouthStretchRight', 0.4 + m * 0.5]])
       if (morph[k] !== undefined) inf[morph[k]] = Math.min(1, v);
     if (t > nextBlink) { blinkT = t; nextBlink = t + 1.5 + Math.random() * 3; }
@@ -308,7 +338,7 @@ function pose(t, dt) {
   }
 }
 
-// Where her body is, in desk coordinates: feet on the desk, hanging from your finger, or falling.
+// Where her body is, in desk coordinates: feet on the desk, hanging from your fingers, or falling.
 let toeOffY = 0;
 function placeBody(dt) {
   woman.updateMatrixWorld(true);
@@ -316,20 +346,24 @@ function placeBody(dt) {
   stage.worldToLocal(bones.LeftToe.getWorldPosition(toeL));
   stage.worldToLocal(bones.RightToe.getWorldPosition(toeR));
   toeOffY = Math.min(toeL.y, toeR.y) - woman.position.y;
-  prevPos.copy(woman.position);
   if (state === 'held') {
+    // her chest sits exactly at your grip (eased in over the first moment, so the pickup isn't a jump)
+    grabAge += dt;
+    const e = Math.max(0, 1 - grabAge / 0.22);
+    tmpV.copy(gripLocal).addScaledVector(grabEase, e * e);
     stage.worldToLocal(bones.Spine2.getWorldPosition(chestW));
-    chestOff.copy(chestW).sub(woman.position);                             // you hold her by the chest
-    woman.position.lerp(chestW.copy(holdLocal).sub(chestOff), 1 - Math.exp(-dt * 18));
-  } else {
-    if (state === 'falling') {
-      vy -= 9.8 * dt; feetY += vy * dt;
-      if (feetY <= 0) { feetY = 0; vy = 0; state = 'ground'; stumble = 1; fear = 1; voice.landed(); }
+    woman.position.add(tmpV.sub(chestW));
+    if (woman.position.y + toeOffY < 0) woman.position.y = -toeOffY;      // feet never sink into the desk
+    vel.copy(gripVel);
+  } else if (state === 'falling') {
+    vy -= 9.8 * dt;
+    woman.position.y += vy * dt;
+    woman.position.x += vel.x * dt; woman.position.z += vel.z * dt;
+    if (woman.position.y + toeOffY <= 0) {
+      woman.position.y = -toeOffY; vy = 0; vel.set(0, 0, 0);
+      state = 'ground'; stumble = 1; fear = 1; voice.landed();
     }
-    woman.position.y = feetY - toeOffY + 0.0008;
-  }
-  if (dt > 0) vel.lerp(lowToe.copy(woman.position).sub(prevPos).divideScalar(dt), state === 'ground' ? 0.1 : 0.2);
-  if (state === 'ground') vel.multiplyScalar(0.9);
+  } else woman.position.y = -toeOffY + 0.0008;
   // contact shadow stays on the desk under her, fading as she rises
   const h = Math.max(0, woman.position.y + toeOffY), s = 1 / (1 + h * 12);
   blob.position.set(woman.position.x, 0.0005, woman.position.z);
@@ -350,7 +384,7 @@ function placeInFront() {
   fwd.normalize();
   const d = $('dist').value / 100;
   placeAt(fwd.x * d, fwd.z * d, $('drop').value / 100);
-  if (woman) { woman.position.x = woman.position.z = 0; feetY = 0; state = 'ground'; }
+  if (woman) { woman.position.x = woman.position.z = 0; state = 'ground'; Object.assign(pend, { x: 0, z: 0, vx: 0, vz: 0 }); }
 }
 function syncLabels() {
   $('distv').textContent = $('dist').value + ' cm';
@@ -396,23 +430,26 @@ function touchesHer(e) {
   return e.clientX > Math.min(...xs) - pad && e.clientX < Math.max(...xs) + pad &&
          e.clientY > Math.min(...ys) - pad && e.clientY < Math.max(...ys) + pad * 0.5;
 }
+// the grip point: under your finger (or between your fingertips), at grabDist from the camera
 function updateHold() {
   ray.setFromCamera(finger, camera);
   sp.copy(ray.ray.origin).addScaledVector(ray.ray.direction, grabDist);
-  sp.y += 0.02;                                                            // lift her clear of the desk
-  holdLocal.copy(stage.worldToLocal(sp));
+  gripLocal.copy(stage.worldToLocal(sp));
 }
 // shared by your touchscreen finger and your real hand
 function grab(p) {
   bones.Spine2.getWorldPosition(sp);
   grabDist = sp.distanceTo(camera.getWorldPosition(chestW));
-  toNdc(p); updateHold(); state = 'held'; fear = 1;
+  toNdc(p); updateHold();
+  grabEase.copy(stage.worldToLocal(bones.Spine2.getWorldPosition(sp))).sub(gripLocal);   // where her chest was vs your grip
+  grabAge = 0; gripFresh = true; gripVel.set(0, 0, 0); gripAcc.set(0, 0, 0);
+  state = 'held'; fear = 1;
   voice.grabbed();
 }
 function drop(toss = true) {
   if (state !== 'held') return;
-  feetY = Math.max(0, woman.position.y + toeOffY);
-  vy = toss ? THREE.MathUtils.clamp(vel.y, -1, 1) : 0;
+  vy = toss ? THREE.MathUtils.clamp(gripVel.y, -1, 1.2) : 0;
+  vel.set(toss ? THREE.MathUtils.clamp(gripVel.x, -0.6, 0.6) : 0, 0, toss ? THREE.MathUtils.clamp(gripVel.z, -0.6, 0.6) : 0);
   state = 'falling';
 }
 let touchHolding = false;
@@ -439,9 +476,29 @@ addEventListener('pointermove', e => {
 const MP_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
 const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const diag = { sound: 'off', hands: 'off', fps: 0, seen: false, gap: 0 };   // shown on screen, for troubleshooting
+let nowMs = () => performance.now();       // one clock for hand timing; the test simulator swaps in its own
+window.__setClock = f => { nowMs = f; };
 let hands = null, lastVideoTime = -1, handHolding = false, lostAt = 0, handDist0 = 1, grabDist0 = 0,
-    smDist = 0, smAt = null, grabGap = 0, lastPts = null, detN = 0, detT0 = 0;
+    grabGap = 0, lastPts = null, detN = 0, detT0 = 0, openSince = 0, lastDet = 0;
 const gapHist = [];                                        // recent [time, finger gap], to spot fingers closing in
+// "One Euro" filter, the standard for hand tracking: smooths hard when your hand is still
+// (kills jitter), barely at all when it moves fast (no lag). Also tracks speed, so between
+// tracker updates (15-30 a second) she can keep moving every screen frame instead of in steps.
+class OneEuro {
+  constructor(minCut, beta) { this.minCut = minCut; this.beta = beta; this.x = null; this.dx = 0; this.t = 0; }
+  reset() { this.x = null; this.dx = 0; }
+  filter(x, t) {
+    if (this.x === null) { this.x = x; this.t = t; return x; }
+    const dt = Math.max(1e-3, t - this.t), a = c => 1 / (1 + 1 / (2 * Math.PI * c * dt));
+    this.dx += ((x - this.x) / dt - this.dx) * a(3.0);   // speed estimate reacts within ~50 ms
+    this.x += (x - this.x) * a(this.minCut + this.beta * Math.abs(this.dx));
+    this.t = t; return this.x;
+  }
+  // projected forward between readings; if readings stop (tracker briefly lost your hand) keep
+  // gliding the way it was going, slowing to a stop, so there's little to catch up when it's back
+  at(t) { const e = Math.max(0, t - this.t); return this.x + this.dx * 0.08 * (1 - Math.exp(-e / 0.08)); }
+}
+const fx = new OneEuro(1.2, 0.05), fy = new OneEuro(1.2, 0.05), fd = new OneEuro(0.6, 0.4), fg = new OneEuro(1.5, 1.0);
 // the exact camera frame the tracker looked at, so the thumb cut-out lines up with the tracked points
 const frameCv = document.createElement('canvas'), frameG = frameCv.getContext('2d');
 
@@ -479,7 +536,7 @@ function trackHand() {
     if (diag.hands === 'GPU') initHands('CPU'); else diag.hands = 'stopped: ' + (e.message || e);
     return;
   }
-  const now = performance.now();
+  const now = nowMs();
   detN++; if (now - detT0 > 1000) { diag.fps = Math.round(detN * 1000 / (now - detT0)); detN = 0; detT0 = now; }
   handFrame(lm ? lm.map(p => toScreen(p, frameCv.width, frameCv.height)) : null);
 }
@@ -506,47 +563,57 @@ function fingersAround(pts) {
 }
 // One frame of hand data: 21 [x, y] screen points, or null when no hand is in view.
 function handFrame(pts) {
-  const dot = $('pinch'), now = performance.now();
+  const dot = $('pinch'), now = nowMs();
   lastPts = pts; diag.seen = !!pts;
   if (!pts) {
     dot.hidden = true;
     lostAt ||= now;
     if (now - lostAt > 500) {                              // hand really gone (not just a missed frame)
-      smAt = null; gapHist.length = 0;
-      if (handHolding) { handHolding = false; drop(false); }
+      fx.reset(); fy.reset(); fd.reset(); fg.reset(); gapHist.length = 0;
+      if (handHolding) { handHolding = false; drop(false); window.__dropWhy = 'hand lost ' + Math.round(now - lostAt) + 'ms'; }
     }
     return;
   }
   lostAt = 0;
+  const t = now / 1000;
+  lastDet = t;
   const d = (a, b) => Math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1]);
   const size = d(0, 9);                                    // wrist to middle knuckle, about 9 cm on an adult
-  const gap = d(4, 8) / size;                              // thumb tip to index tip, in hand-lengths
+  // thumb tip to index tip, in hand-lengths; smoothed, because one noisy reading must never grab or drop her
+  const gap = fg.filter(d(4, 8) / size, t);
   diag.gap = gap;
   gapHist.push([now, gap]); while (now - gapHist[0][0] > 700) gapHist.shift();
-  const raw = [(pts[4][0] + pts[8][0]) / 2, (pts[4][1] + pts[8][1]) / 2];
-  // the tracker's points jitter a few pixels every frame: smooth them so she doesn't shake
-  smAt = smAt ? [smAt[0] + (raw[0] - smAt[0]) * 0.45, smAt[1] + (raw[1] - smAt[1]) * 0.45] : raw;
-  const at = { clientX: smAt[0], clientY: smAt[1] };
-  const dist = focalPx() * 0.09 / size;                    // metres from the camera, judged by hand size
-  smDist = smDist ? smDist + (dist - smDist) * 0.12 : dist;
+  const at = { clientX: fx.filter((pts[4][0] + pts[8][0]) / 2, t), clientY: fy.filter((pts[4][1] + pts[8][1]) / 2, t) };
+  fd.filter(focalPx() * 0.09 / size, t);                   // metres from the camera, judged by hand size
   const around = !handHolding && fingersAround(pts);
   if (around && !touchHolding) {
     const widest = Math.max(...gapHist.map(g => g[1]));
     // grab: fingers clearly closing in around her, or already pinched tight
-    if (gap < 0.3 || (widest - gap > 0.1 && gap < widest * 0.78)) {
-      grab(at); handHolding = true; grabGap = gap; handDist0 = smDist; grabDist0 = grabDist;
+    if (gap < 0.3 || (gap < 0.55 && widest - gap > 0.12 && gap < widest * 0.78)) {
+      grab(at); handHolding = true; grabGap = Math.max(gap, 0.25); handDist0 = fd.x; grabDist0 = grabDist; openSince = 0;
     }
   } else if (handHolding) {
-    if (gap > grabGap * 1.35 + 0.08) { handHolding = false; drop(); }          // fingers spread: let go
-    else {
-      toNdc(at);
-      const ratio = THREE.MathUtils.clamp(smDist / handDist0, 0.6, 1.6);
-      grabDist = THREE.MathUtils.clamp(grabDist0 * (Math.abs(ratio - 1) < 0.06 ? 1 : ratio), 0.08, 1.5);
-    }
+    // let go only when your fingers have stayed spread for a moment, not on one noisy reading
+    // let go once your fingers open well past how you've been holding her, for at least 150 ms
+    if (gap > THREE.MathUtils.clamp(grabGap + 0.22, 0.5, 0.72)) { openSince ||= now; if (now - openSince > 150) { handHolding = false; drop(); window.__dropWhy = 'opened, gap ' + gap.toFixed(2) + ' grabGap ' + grabGap.toFixed(2); } }
+    else { openSince = 0; grabGap += (Math.max(gap, 0.25) - grabGap) * 0.08; }   // how you've been holding her, on average
   }
   dot.hidden = handHolding;                                // while holding, your own fingers are the cue
   dot.style.transform = `translate(${at.clientX}px, ${at.clientY}px)`;
   dot.className = around ? 'over' : '';
+}
+// Every screen frame while you hold her: where your pinch is now (filtered, projected forward
+// between tracker updates) and how far away, judged by how big your hand looks.
+const shown = { x: 0, y: 0 };
+function followHand(dt) {
+  if (!handHolding || fx.x === null) return;
+  const t = nowMs() / 1000, tx = fx.at(t), ty = fy.at(t);
+  if (grabAge < 0.02) { shown.x = tx; shown.y = ty; }
+  const k = 1 - Math.exp(-dt / 0.025);                     // a 30 ms glide, so a fresh tracker reading never snaps her
+  shown.x += (tx - shown.x) * k; shown.y += (ty - shown.y) * k;
+  toNdc({ clientX: shown.x, clientY: shown.y });
+  const r = fd.x / handDist0, ex = Math.max(0, Math.abs(r - 1) - 0.05);   // ignore the first 5%: hand-size noise
+  grabDist = THREE.MathUtils.clamp(grabDist0 * THREE.MathUtils.clamp(1 + Math.sign(r - 1) * ex, 0.6, 1.6), 0.08, 1.5);
 }
 
 window.__handFrame = handFrame;            // lets a test feed in a pretend hand
@@ -760,6 +827,7 @@ function frame(dt, t) {
   if (gyro) applyGyro(); else camera.quaternion.setFromEuler(eul.set(pitch, -yaw, 0, 'YXZ'));
   camera.updateMatrixWorld();
   trackHand();
+  followHand(dt);
   if (state === 'held') updateHold();      // she stays under your finger even as you turn the phone
   voice.update(dt);
   pose(t, dt);
@@ -777,7 +845,9 @@ document.body.appendChild(occ); sizeOcc();
 addEventListener('resize', sizeOcc);
 renderer.setAnimationLoop(() => { const dt = Math.min(clock.getDelta(), 0.05); frame(dt, clock.elapsedTime); });
 window.__frame = frame;                    // lets a test step the scene by hand
-window.__state = () => ({ state, fear, feetY, pos: woman?.position.toArray() });
+window.__state = () => ({ state, fear, hb, pos: woman?.position.toArray() });
+window.__finger = () => [(finger.x + 1) / 2 * innerWidth, (1 - finger.y) / 2 * innerHeight];
+window.__pend = () => [pend.x, pend.z, gripAcc.x, gripAcc.z].map(v => +v.toFixed(2));
 </script>
 </body>
 </html>
