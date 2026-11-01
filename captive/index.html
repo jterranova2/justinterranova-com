@@ -53,7 +53,7 @@
 <div id="ui" hidden>
   <label>Distance <input id="dist" type="range" min="20" max="120" value="45"><span id="distv"></span></label>
   <label>Desk below cam <input id="drop" type="range" min="5" max="80" value="30"><span id="dropv"></span></label>
-  <div class="row"><span id="msg">Touch her to pick her up. Let go to drop her.</span><span class="row" style="gap:8px"><button id="mute">Mute</button><button id="recenter">Put her in front of me</button></span></div>
+  <div class="row"><span id="msg">Touch her to pick her up. Let go to drop her.</span><span class="row" style="gap:8px"><button id="calib">Set desk</button><button id="mute">Mute</button><button id="recenter">Recenter</button></span></div>
 </div>
 
 <script type="importmap">
@@ -396,6 +396,7 @@ function syncLabels() {
   placeAt(flat.x * d, flat.z * d, $('drop').value / 100);
 }));
 $('recenter').onclick = placeInFront;
+$('calib').onclick = () => startCalib();
 $('mute').onclick = () => { $('mute').textContent = voice.toggleMute() ? 'Sound on' : 'Mute'; };
 syncLabels();
 
@@ -499,21 +500,48 @@ class OneEuro {
   at(t) { const e = Math.max(0, t - this.t); return this.x + this.dx * 0.08 * (1 - Math.exp(-e / 0.08)); }
 }
 const fx = new OneEuro(1.2, 0.05), fy = new OneEuro(1.2, 0.05), fd = new OneEuro(0.6, 0.4), fg = new OneEuro(1.5, 1.0);
-// the exact camera frame the tracker looked at, so the thumb cut-out lines up with the tracked points
+// Camera frames go to the tracker shrunk to 640 px wide: plenty for finding a hand, and far less
+// work. sendCv is the frame being analysed; frameCv is the last analysed frame, which the thumb
+// cut-out uses so it lines up exactly with the tracked points.
+const TRACK_W = 640;
+const sendCv = document.createElement('canvas'), sendG = sendCv.getContext('2d');
 const frameCv = document.createElement('canvas'), frameG = frameCv.getContext('2d');
+let worker = null, inFlight = false, sentAt = 0;
 
-// Runs the tracker on the graphics chip when the browser allows it; Chrome on iPhone often
-// doesn't, so fall back to the processor (a little slower, same result).
-async function initHands(delegate = 'GPU') {
+// The tracker runs in a background worker, so however slow it is the screen never freezes.
+// If this browser won't run it there, fall back to running it on the page itself.
+function initHands() {
   diag.hands = 'loading';
+  try {
+    worker = new Worker('hands-worker.js');
+    const giveUp = setTimeout(() => { if (diag.hands === 'loading') { worker?.terminate(); worker = null; initHandsHere(); } }, 20000);
+    worker.onmessage = e => {
+      const m = e.data;
+      if (m.ready) {
+        clearTimeout(giveUp); diag.hands = m.delegate + ' bg';
+        $('msg').textContent = 'Pinch her between your thumb and finger, or touch her. Set desk first for best placement.';
+      } else if (m.error && !('lm' in m)) {                // couldn't start in the background
+        clearTimeout(giveUp); worker.terminate(); worker = null; initHandsHere();
+      } else {
+        inFlight = false;
+        if (m.error) { diag.hands = 'error: ' + m.error; return; }
+        gotHand(m.lm);
+      }
+    };
+    worker.onerror = () => { worker?.terminate(); worker = null; if (diag.hands === 'loading') initHandsHere(); };
+    worker.postMessage({ init: true, bundle: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs', wasm: MP_WASM, model: HAND_MODEL });
+  } catch { initHandsHere(); }
+}
+async function initHandsHere(delegate = 'GPU') {
+  diag.hands = 'loading here';
   try {
     const vision = await FilesetResolver.forVisionTasks(MP_WASM);
     hands = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: HAND_MODEL, delegate }, runningMode: 'VIDEO', numHands: 1 });
-    diag.hands = delegate;
-    $('msg').textContent = 'Pinch her between your thumb and finger, or touch her on screen.';
+    diag.hands = delegate + ' page';
+    $('msg').textContent = 'Pinch her between your thumb and finger, or touch her. Set desk first for best placement.';
   } catch (e) {
-    if (delegate === 'GPU') return initHands('CPU');
+    if (delegate === 'GPU') return initHandsHere('CPU');
     diag.hands = 'failed: ' + (e.message || e);
     $('msg').textContent = 'Hand tracking unavailable here. Touch her on screen instead.';
   }
@@ -521,24 +549,39 @@ async function initHands(delegate = 'GPU') {
 // camera-frame point (0..1) -> screen pixels, matching the video's object-fit: cover
 function toScreen(p, w, h) {
   const s = Math.max(innerWidth / w, innerHeight / h);
-  return [p.x * w * s + (innerWidth - w * s) / 2, p.y * h * s + (innerHeight - h * s) / 2];
+  return [p[0] * w * s + (innerWidth - w * s) / 2, p[1] * h * s + (innerHeight - h * s) / 2];
+}
+// results are in: keep that exact frame for the thumb, then act on the hand
+function gotHand(lm) {
+  if (frameCv.width !== sendCv.width || frameCv.height !== sendCv.height) { frameCv.width = sendCv.width; frameCv.height = sendCv.height; }
+  frameG.drawImage(sendCv, 0, 0);
+  const now = nowMs();
+  detN++; if (now - detT0 > 1000) { diag.fps = Math.round(detN * 1000 / (now - detT0)); detN = 0; detT0 = now; }
+  handFrame(lm ? lm.map(p => toScreen(p, sendCv.width, sendCv.height)) : null);
 }
 function trackHand() {
   const v = $('cam');
-  if (!hands || v.hidden || v.readyState < 2 || v.currentTime === lastVideoTime) return;
+  if ((!worker && !hands) || v.hidden || v.readyState < 2 || v.currentTime === lastVideoTime) return;
+  if (inFlight && performance.now() - sentAt < 1000) return;   // one frame at a time; never wait forever on one
   lastVideoTime = v.currentTime;
-  if (frameCv.width !== v.videoWidth || frameCv.height !== v.videoHeight) { frameCv.width = v.videoWidth; frameCv.height = v.videoHeight; }
-  frameG.drawImage(v, 0, 0);
-  let lm;
-  try { lm = hands.detectForVideo(frameCv, performance.now()).landmarks?.[0]; }
-  catch (e) {                                              // tracker failed mid-run: retry on the processor
-    hands = null;
-    if (diag.hands === 'GPU') initHands('CPU'); else diag.hands = 'stopped: ' + (e.message || e);
+  const w = TRACK_W, h = Math.round(TRACK_W * v.videoHeight / v.videoWidth);
+  if (sendCv.width !== w || sendCv.height !== h) { sendCv.width = w; sendCv.height = h; }
+  sendG.drawImage(v, 0, 0, w, h);
+  if (worker) {
+    if (diag.hands === 'loading') return;
+    inFlight = true; sentAt = performance.now();
+    createImageBitmap(sendCv).then(bmp => worker.postMessage({ frame: bmp, t: sentAt }, [bmp]))
+                             .catch(() => { inFlight = false; });
     return;
   }
-  const now = nowMs();
-  detN++; if (now - detT0 > 1000) { diag.fps = Math.round(detN * 1000 / (now - detT0)); detN = 0; detT0 = now; }
-  handFrame(lm ? lm.map(p => toScreen(p, frameCv.width, frameCv.height)) : null);
+  let lm;
+  try { lm = hands.detectForVideo(sendCv, performance.now()).landmarks?.[0]?.map(p => [p.x, p.y]); }
+  catch (e) {                                              // tracker failed mid-run: retry on the processor
+    hands = null;
+    if (diag.hands.startsWith('GPU')) initHandsHere('CPU'); else diag.hands = 'stopped: ' + (e.message || e);
+    return;
+  }
+  gotHand(lm ?? null);
 }
 const focalPx = () => innerHeight / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
 // her outline on screen (head, hands, feet), in pixels
@@ -565,6 +608,7 @@ function fingersAround(pts) {
 function handFrame(pts) {
   const dot = $('pinch'), now = nowMs();
   lastPts = pts; diag.seen = !!pts;
+  if (calib) { calibFrame(pts, now); return; }
   if (!pts) {
     dot.hidden = true;
     lostAt ||= now;
@@ -602,6 +646,56 @@ function handFrame(pts) {
   dot.style.transform = `translate(${at.clientX}px, ${at.clientY}px)`;
   dot.className = around ? 'over' : '';
 }
+// ---------- Set desk: your hand as a ruler ----------
+// Rest your open hand flat on the desk. An adult palm is about 9 cm long and 7.5 cm across, so
+// how big it looks tells us how far away it is; where it is on screen tells us the direction.
+// Together that's a real point on your desk, so she can stand on the actual surface.
+let calib = null;
+function startCalib() {
+  if (!worker && !hands && !window.__simHands) { $('msg').textContent = 'Hand tracking is still loading. Try again in a moment.'; return; }
+  if (state === 'held') return;
+  calib = { start: nowMs(), samples: [] };
+  $('msg').textContent = 'Rest your open hand flat on the desk where she should stand. Hold still…';
+}
+function calibFrame(pts, now) {
+  const dot = $('pinch');
+  if (now - calib.start > 12000) { calib = null; dot.hidden = true; $('msg').textContent = "Couldn't see your hand clearly. Tap Set desk and try again with your whole hand in view."; return; }
+  if (!pts) { dot.hidden = true; calib.samples.length = 0; return; }
+  const d = (a, b) => Math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1]);
+  // the less tilted of the palm's length and width (seen at an angle, one of them shrinks)
+  const pxPerM = Math.max(d(0, 9) / 0.09, d(5, 17) / 0.075);
+  const palm = [0, 5, 9, 13, 17].reduce((s, i) => [s[0] + pts[i][0] / 5, s[1] + pts[i][1] / 5], [0, 0]);
+  dot.hidden = false; dot.className = 'pinch';
+  dot.style.transform = `translate(${palm[0]}px, ${palm[1]}px)`;
+  const ss = calib.samples;
+  ss.push({ palm, pxPerM, t: now });
+  while (ss.length && now - ss[0].t > 1000) ss.shift();
+  if (ss.length < 6 || now - ss[0].t < 800) return;
+  const mean = f => ss.reduce((s, x) => s + f(x), 0) / ss.length;
+  const mx = mean(x => x.palm[0]), my = mean(x => x.palm[1]), ms = mean(x => x.pxPerM);
+  // still enough? judged on averages, so a small, far-away hand's normal jitter doesn't count as moving
+  const wobble = Math.sqrt(mean(x => (x.palm[0] - mx) ** 2 + (x.palm[1] - my) ** 2));
+  const spread = Math.sqrt(mean(x => ((x.pxPerM - ms) / ms) ** 2));
+  if (wobble > 10 || spread > 0.07) return;                // not still yet
+  // the desk point: along the ray through your palm, at the distance your hand's size implies
+  const dist = focalPx() / ms;
+  toNdc({ clientX: mx, clientY: my });
+  ray.setFromCamera(finger, camera);
+  const p = ray.ray.origin.clone().addScaledVector(ray.ray.direction, dist);
+  const deskY = p.y - 0.015;                                // your palm sits ~1.5 cm above the desk
+  const flat = Math.hypot(p.x, p.z);
+  calib = null; dot.hidden = true;
+  if (deskY > -0.03 || flat < 0.08) { $('msg').textContent = "That doesn't look like a desk below the phone. Hold the phone above the desk and try again."; return; }
+  stage.position.set(p.x, deskY, p.z);
+  stage.lookAt(0, deskY, 0);
+  key.position.copy(stage.position).add(new THREE.Vector3(0.25, 1, 0.15));
+  key.target.position.copy(stage.position);
+  if (woman) { woman.position.x = woman.position.z = 0; state = 'ground'; Object.assign(pend, { x: 0, z: 0, vx: 0, vz: 0 }); }
+  $('dist').value = Math.round(flat * 100); $('drop').value = Math.round(-deskY * 100); syncLabels();
+  $('msg').textContent = `Desk set: ${Math.round(flat * 100)} cm away, ${Math.round(-deskY * 100)} cm below the phone. She's standing where your hand was.`;
+}
+window.__calib = startCalib;
+
 // Every screen frame while you hold her: where your pinch is now (filtered, projected forward
 // between tracker updates) and how far away, judged by how big your hand looks.
 const shown = { x: 0, y: 0 };
@@ -612,8 +706,9 @@ function followHand(dt) {
   const k = 1 - Math.exp(-dt / 0.025);                     // a 30 ms glide, so a fresh tracker reading never snaps her
   shown.x += (tx - shown.x) * k; shown.y += (ty - shown.y) * k;
   toNdc({ clientX: shown.x, clientY: shown.y });
-  const r = fd.x / handDist0, ex = Math.max(0, Math.abs(r - 1) - 0.05);   // ignore the first 5%: hand-size noise
-  grabDist = THREE.MathUtils.clamp(grabDist0 * THREE.MathUtils.clamp(1 + Math.sign(r - 1) * ex, 0.6, 1.6), 0.08, 1.5);
+  // Depth stays where she really was when you pinched her: your fingers were at her distance then,
+  // and judging depth from how big your hand looks is too unreliable to keep re-guessing it.
+  grabDist = grabDist0;
 }
 
 window.__handFrame = handFrame;            // lets a test feed in a pretend hand
