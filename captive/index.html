@@ -24,11 +24,18 @@
   #ui .row { display: flex; gap: 8px; justify-content: space-between; align-items: center; }
   #ui button { padding: 8px 14px; font-size: 13px; }
   #msg { font-size: 12px; color: var(--dim); }
+  /* where the hand tracker sees your pinch: hollow = hand seen, amber ring = over her, filled = holding */
+  #pinch { position: fixed; left: 0; top: 0; width: 18px; height: 18px; margin: -11px 0 0 -11px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.85); pointer-events: none; z-index: 2; transition: background .1s, border-color .1s; }
+  #pinch.over { border-color: var(--accent); }
+  #pinch.pinch { background: rgba(255,255,255,.8); }
+  #pinch.holding { background: var(--accent); border-color: var(--accent); }
 </style>
 </head>
 <body>
 <video id="cam" playsinline muted autoplay hidden></video>
 <div id="desk" hidden></div>
+<div id="pinch" hidden></div>
 
 <div id="start">
   <div>
@@ -47,12 +54,14 @@
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "mediapipe": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
 } }
 </script>
 <script type="module">
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { FilesetResolver, HandLandmarker } from 'mediapipe';
 
 // Microsoft Rocketbox "Female_Adult_01" (MIT license), textures shrunk to 1024px
 const MODEL_DIR = 'models/f01/';
@@ -383,29 +392,96 @@ function updateHold() {
   sp.y += 0.02;                                                            // lift her clear of the desk
   holdLocal.copy(stage.worldToLocal(sp));
 }
+// shared by your touchscreen finger and your real hand
+function grab(p) {
+  bones.Spine2.getWorldPosition(sp);
+  grabDist = sp.distanceTo(camera.getWorldPosition(chestW));
+  toNdc(p); updateHold(); state = 'held'; fear = 1;
+}
+function drop(toss = true) {
+  if (state !== 'held') return;
+  feetY = Math.max(0, woman.position.y + toeOffY);
+  vy = toss ? THREE.MathUtils.clamp(vel.y, -1, 1) : 0;
+  state = 'falling';
+}
+let touchHolding = false;
 addEventListener('pointerdown', e => {
-  if (e.target !== renderer.domElement) return;
+  if (e.target !== renderer.domElement || handHolding) return;
   if (touchesHer(e)) {
-    bones.Spine2.getWorldPosition(sp);
-    grabDist = sp.distanceTo(camera.getWorldPosition(chestW));
-    toNdc(e); updateHold(); state = 'held'; fear = 1;
+    grab(e); touchHolding = true;
     renderer.domElement.setPointerCapture(e.pointerId);
   } else if (!gyro) drag = [e.clientX, e.clientY];
 });
-addEventListener('pointerup', () => {
-  drag = null;
-  if (state !== 'held') return;
-  feetY = Math.max(0, woman.position.y + toeOffY);
-  vy = THREE.MathUtils.clamp(vel.y, -1, 1);
-  state = 'falling';
-});
-addEventListener('pointercancel', () => { drag = null; if (state === 'held') { feetY = Math.max(0, woman.position.y + toeOffY); vy = 0; state = 'falling'; } });
+addEventListener('pointerup', () => { drag = null; if (touchHolding) { touchHolding = false; drop(); } });
+addEventListener('pointercancel', () => { drag = null; if (touchHolding) { touchHolding = false; drop(false); } });
 addEventListener('pointermove', e => {
-  if (state === 'held') { toNdc(e); return; }
+  if (touchHolding) { toNdc(e); return; }
   if (!drag) return;
   yaw += (e.clientX - drag[0]) * 0.004; pitch += (e.clientY - drag[1]) * 0.004;
   pitch = THREE.MathUtils.clamp(pitch, -1.4, 1.2); drag = [e.clientX, e.clientY];
 });
+
+// ---------- your real hand: pinch her between thumb and index finger ----------
+// Google MediaPipe finds 21 points on your hand in each camera frame. Thumb tip (4) and
+// index tip (8) coming together is a pinch; how big your hand looks tells us how far away it is.
+const MP_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+let hands = null, lastVideoTime = -1, pinching = false, handHolding = false, lostAt = 0, handDist0 = 1, grabDist0 = 0;
+async function initHands() {
+  $('msg').textContent = 'Loading hand tracking…';
+  try {
+    const vision = await FilesetResolver.forVisionTasks(MP_WASM);
+    hands = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: HAND_MODEL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 1 });
+    $('msg').textContent = 'Pinch her with your fingers, or touch her on screen.';
+  } catch (e) {
+    $('msg').textContent = 'Hand tracking unavailable here. Touch her on screen to pick her up.';
+  }
+}
+// camera-image point (0..1) -> screen pixels, matching the video's object-fit: cover
+function toScreen(p, v) {
+  const s = Math.max(innerWidth / v.videoWidth, innerHeight / v.videoHeight);
+  return [p.x * v.videoWidth * s + (innerWidth - v.videoWidth * s) / 2,
+          p.y * v.videoHeight * s + (innerHeight - v.videoHeight * s) / 2];
+}
+function trackHand() {
+  const v = $('cam');
+  if (!hands || v.readyState < 2 || v.currentTime === lastVideoTime) return;
+  lastVideoTime = v.currentTime;
+  const lm = hands.detectForVideo(v, performance.now()).landmarks?.[0];
+  handFrame(lm ? lm.map(p => toScreen(p, v)) : null);
+}
+const focalPx = () => innerHeight / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+// One frame of hand data: 21 [x, y] screen points, or null when no hand is in view.
+function handFrame(pts) {
+  const dot = $('pinch'), now = performance.now();
+  if (!pts) {
+    dot.hidden = true; pinching = false;
+    lostAt ||= now;
+    if (handHolding && now - lostAt > 300) { handHolding = false; drop(false); }   // lost your hand: she falls
+    return;
+  }
+  lostAt = 0;
+  const d = (a, b) => Math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1]);
+  const size = d(0, 9);                                    // wrist to middle knuckle, about 9 cm on an adult
+  const gap = d(4, 8) / size;                              // thumb tip to index tip, relative to hand size
+  const at = { clientX: (pts[4][0] + pts[8][0]) / 2, clientY: (pts[4][1] + pts[8][1]) / 2 };
+  const handDist = focalPx() * 0.09 / size;                // metres from the camera, judged by hand size
+  const was = pinching;
+  pinching = was ? gap < 0.42 : gap < 0.22;                // two thresholds so it doesn't flicker
+  const over = !handHolding && touchesHer(at);
+  if (pinching && !was && over && !touchHolding) {
+    grab(at); handHolding = true; handDist0 = handDist; grabDist0 = grabDist;
+  }
+  if (handHolding) {
+    if (!pinching) { handHolding = false; drop(); }
+    else { toNdc(at); grabDist = THREE.MathUtils.clamp(grabDist0 * handDist / handDist0, 0.08, 1.5); }
+  }
+  dot.hidden = false;
+  dot.style.transform = `translate(${at.clientX}px, ${at.clientY}px)`;
+  dot.className = handHolding ? 'holding' : pinching ? 'pinch' : over ? 'over' : '';
+}
+window.__handFrame = handFrame;            // lets a test feed in a pretend hand
 
 // ---------- start ----------
 $('go').onclick = async () => {
@@ -416,6 +492,7 @@ $('go').onclick = async () => {
     if (location.search.includes('desk')) throw new Error('desk preview');
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
     $('cam').srcObject = stream; $('cam').hidden = false; await $('cam').play();
+    initHands();
   } catch (e) {
     $('desk').hidden = false;   // no camera (e.g. desktop): fake desk backdrop, drag to look
     $('msg').textContent = 'No camera found. Drag to look around. Click her to pick her up.';
@@ -433,6 +510,7 @@ const clock = new THREE.Clock();
 function frame(dt, t) {
   if (gyro) applyGyro(); else camera.quaternion.setFromEuler(eul.set(pitch, -yaw, 0, 'YXZ'));
   camera.updateMatrixWorld();
+  trackHand();
   if (state === 'held') updateHold();      // she stays under your finger even as you turn the phone
   pose(t, dt);
   renderer.render(scene, camera);
