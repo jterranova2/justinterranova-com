@@ -27,6 +27,9 @@
   /* where the hand tracker sees your pinch: hollow = hand seen, amber ring = over her, filled = holding */
   #pinch { position: fixed; left: 0; top: 0; width: 18px; height: 18px; margin: -11px 0 0 -11px; border-radius: 50%;
     border: 2px solid rgba(255,255,255,.85); pointer-events: none; z-index: 2; transition: background .1s, border-color .1s; }
+  /* status line for troubleshooting on the phone: sound, hand tracker, finger gap */
+  #diag { position: fixed; z-index: 3; left: max(10px, env(safe-area-inset-left)); top: calc(8px + env(safe-area-inset-top));
+    font: 11px/1.3 ui-monospace, Menlo, monospace; color: #fff; background: rgba(0,0,0,.45); padding: 4px 7px; border-radius: 6px; pointer-events: none; }
   #occ { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
   #pinch.over { border-color: var(--accent); }
   #pinch.pinch { background: rgba(255,255,255,.8); }
@@ -37,6 +40,7 @@
 <video id="cam" playsinline muted autoplay hidden></video>
 <div id="desk" hidden></div>
 <div id="pinch" hidden></div>
+<div id="diag" hidden></div>
 
 <div id="start">
   <div>
@@ -429,57 +433,86 @@ addEventListener('pointermove', e => {
 });
 
 // ---------- your real hand: pinch her between thumb and index finger ----------
-// Google MediaPipe finds 21 points on your hand in each camera frame. Thumb tip (4) and
-// index tip (8) coming together is a pinch; how big your hand looks tells us how far away it is.
+// Google MediaPipe finds 21 points on your hand in each camera frame (0 = wrist, 4 = thumb tip,
+// 8 = index tip, 9 = middle knuckle). Pinching someone 15 cm tall never closes your fingers
+// fully, so a grab is: thumb and index tip on either side of her, closing in.
 const MP_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
 const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
-let hands = null, handMode = '', lastVideoTime = -1, pinching = false, handHolding = false, lostAt = 0,
-    handDist0 = 1, grabDist0 = 0, smDist = 0, smAt = null;
+const diag = { sound: 'off', hands: 'off', fps: 0, seen: false, gap: 0 };   // shown on screen, for troubleshooting
+let hands = null, lastVideoTime = -1, handHolding = false, lostAt = 0, handDist0 = 1, grabDist0 = 0,
+    smDist = 0, smAt = null, grabGap = 0, lastPts = null, detN = 0, detT0 = 0;
+const gapHist = [];                                        // recent [time, finger gap], to spot fingers closing in
+// the exact camera frame the tracker looked at, so the thumb cut-out lines up with the tracked points
+const frameCv = document.createElement('canvas'), frameG = frameCv.getContext('2d');
+
 // Runs the tracker on the graphics chip when the browser allows it; Chrome on iPhone often
 // doesn't, so fall back to the processor (a little slower, same result).
 async function initHands(delegate = 'GPU') {
-  $('msg').textContent = 'Loading hand tracking…';
+  diag.hands = 'loading';
   try {
     const vision = await FilesetResolver.forVisionTasks(MP_WASM);
     hands = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: HAND_MODEL, delegate }, runningMode: 'VIDEO', numHands: 1 });
-    handMode = delegate;
-    $('msg').textContent = `Pinch her with your fingers, or touch her on screen. (hands: ${delegate})`;
+    diag.hands = delegate;
+    $('msg').textContent = 'Pinch her between your thumb and finger, or touch her on screen.';
   } catch (e) {
     if (delegate === 'GPU') return initHands('CPU');
-    $('msg').textContent = 'Hand tracking unavailable here (' + (e.message || e) + '). Touch her on screen instead.';
+    diag.hands = 'failed: ' + (e.message || e);
+    $('msg').textContent = 'Hand tracking unavailable here. Touch her on screen instead.';
   }
 }
-// camera-image point (0..1) -> screen pixels, matching the video's object-fit: cover
-function toScreen(p, v) {
-  const s = Math.max(innerWidth / v.videoWidth, innerHeight / v.videoHeight);
-  return [p.x * v.videoWidth * s + (innerWidth - v.videoWidth * s) / 2,
-          p.y * v.videoHeight * s + (innerHeight - v.videoHeight * s) / 2];
+// camera-frame point (0..1) -> screen pixels, matching the video's object-fit: cover
+function toScreen(p, w, h) {
+  const s = Math.max(innerWidth / w, innerHeight / h);
+  return [p.x * w * s + (innerWidth - w * s) / 2, p.y * h * s + (innerHeight - h * s) / 2];
 }
 function trackHand() {
   const v = $('cam');
-  if (!hands || v.readyState < 2 || v.currentTime === lastVideoTime) return;
+  if (!hands || v.hidden || v.readyState < 2 || v.currentTime === lastVideoTime) return;
   lastVideoTime = v.currentTime;
+  if (frameCv.width !== v.videoWidth || frameCv.height !== v.videoHeight) { frameCv.width = v.videoWidth; frameCv.height = v.videoHeight; }
+  frameG.drawImage(v, 0, 0);
   let lm;
-  try { lm = hands.detectForVideo(v, performance.now()).landmarks?.[0]; }
+  try { lm = hands.detectForVideo(frameCv, performance.now()).landmarks?.[0]; }
   catch (e) {                                              // tracker failed mid-run: retry on the processor
     hands = null;
-    if (handMode === 'GPU') initHands('CPU');
-    else $('msg').textContent = 'Hand tracking stopped (' + (e.message || e) + '). Touch her on screen instead.';
+    if (diag.hands === 'GPU') initHands('CPU'); else diag.hands = 'stopped: ' + (e.message || e);
     return;
   }
-  handFrame(lm ? lm.map(p => toScreen(p, v)) : null);
+  const now = performance.now();
+  detN++; if (now - detT0 > 1000) { diag.fps = Math.round(detN * 1000 / (now - detT0)); detN = 0; detT0 = now; }
+  handFrame(lm ? lm.map(p => toScreen(p, frameCv.width, frameCv.height)) : null);
 }
 const focalPx = () => innerHeight / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+// her outline on screen (head, hands, feet), in pixels
+function herBox() {
+  if (!woman) return null;
+  const pts = ['Head', 'LeftFoot', 'RightFoot', 'LeftHand', 'RightHand', 'Hips'].map(n => {
+    bones[n].getWorldPosition(sp).project(camera);
+    return [(sp.x + 1) / 2 * innerWidth, (1 - sp.y) / 2 * innerHeight];
+  });
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+}
+// is her body between your thumb tip and index tip?
+function fingersAround(pts) {
+  const b = herBox(); if (!b) return false;
+  const pad = Math.max(12, (b.y1 - b.y0) * 0.12);
+  for (let k = 0; k <= 10; k++) {
+    const x = pts[4][0] + (pts[8][0] - pts[4][0]) * k / 10, y = pts[4][1] + (pts[8][1] - pts[4][1]) * k / 10;
+    if (x > b.x0 - pad && x < b.x1 + pad && y > b.y0 - pad && y < b.y1 + pad) return true;
+  }
+  return false;
+}
 // One frame of hand data: 21 [x, y] screen points, or null when no hand is in view.
 function handFrame(pts) {
   const dot = $('pinch'), now = performance.now();
-  lastPts = pts;
+  lastPts = pts; diag.seen = !!pts;
   if (!pts) {
     dot.hidden = true;
     lostAt ||= now;
-    if (now - lostAt > 500) {                              // hand really gone (not just a dropped frame)
-      pinching = false; smAt = null;
+    if (now - lostAt > 500) {                              // hand really gone (not just a missed frame)
+      smAt = null; gapHist.length = 0;
       if (handHolding) { handHolding = false; drop(false); }
     }
     return;
@@ -487,21 +520,24 @@ function handFrame(pts) {
   lostAt = 0;
   const d = (a, b) => Math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1]);
   const size = d(0, 9);                                    // wrist to middle knuckle, about 9 cm on an adult
-  const gap = d(4, 8) / size;                              // thumb tip to index tip, relative to hand size
+  const gap = d(4, 8) / size;                              // thumb tip to index tip, in hand-lengths
+  diag.gap = gap;
+  gapHist.push([now, gap]); while (now - gapHist[0][0] > 700) gapHist.shift();
   const raw = [(pts[4][0] + pts[8][0]) / 2, (pts[4][1] + pts[8][1]) / 2];
   // the tracker's points jitter a few pixels every frame: smooth them so she doesn't shake
   smAt = smAt ? [smAt[0] + (raw[0] - smAt[0]) * 0.45, smAt[1] + (raw[1] - smAt[1]) * 0.45] : raw;
   const at = { clientX: smAt[0], clientY: smAt[1] };
   const dist = focalPx() * 0.09 / size;                    // metres from the camera, judged by hand size
-  smDist = smDist ? smDist + (dist - smDist) * 0.12 : dist; // hand size is the noisiest reading: smooth hard
-  const was = pinching;
-  pinching = was ? gap < 0.45 : gap < 0.25;                // two thresholds so it doesn't flicker
-  const over = !handHolding && touchesHer(at);
-  if (pinching && !was && over && !touchHolding) {
-    grab(at); handHolding = true; handDist0 = smDist; grabDist0 = grabDist;
-  }
-  if (handHolding) {
-    if (!pinching) { handHolding = false; drop(); }
+  smDist = smDist ? smDist + (dist - smDist) * 0.12 : dist;
+  const around = !handHolding && fingersAround(pts);
+  if (around && !touchHolding) {
+    const widest = Math.max(...gapHist.map(g => g[1]));
+    // grab: fingers clearly closing in around her, or already pinched tight
+    if (gap < 0.3 || (widest - gap > 0.1 && gap < widest * 0.78)) {
+      grab(at); handHolding = true; grabGap = gap; handDist0 = smDist; grabDist0 = grabDist;
+    }
+  } else if (handHolding) {
+    if (gap > grabGap * 1.35 + 0.08) { handHolding = false; drop(); }          // fingers spread: let go
     else {
       toNdc(at);
       const ratio = THREE.MathUtils.clamp(smDist / handDist0, 0.6, 1.6);
@@ -510,13 +546,15 @@ function handFrame(pts) {
   }
   dot.hidden = handHolding;                                // while holding, your own fingers are the cue
   dot.style.transform = `translate(${at.clientX}px, ${at.clientY}px)`;
-  dot.className = pinching ? 'pinch' : over ? 'over' : '';
+  dot.className = around ? 'over' : '';
 }
 
+window.__handFrame = handFrame;            // lets a test feed in a pretend hand
+window.__frameCv = frameCv;
+
 // ---------- your thumb in front of her ----------
-// While you hold her, cut your real thumb out of the camera picture and paint it over her,
-// so she looks pinched between your thumb (in front) and index finger (behind her).
-let lastPts = null;
+// Whenever your thumb is near her, cut it out of the camera frame the tracker saw and paint it
+// over her, so she sits between your thumb (in front) and index finger (behind her).
 const occ = document.createElement('canvas');
 occ.id = 'occ';
 const og = occ.getContext('2d');
@@ -527,67 +565,66 @@ function sizeOcc() {
 }
 function drawThumb() {
   og.clearRect(0, 0, innerWidth, innerHeight);
-  const v = $('cam'), pts = lastPts;
-  if (!handHolding || !pts || v.hidden || !v.videoWidth) return;
+  const pts = lastPts;
+  if (!pts || !frameCv.width) return;
+  const b = herBox(); if (!b) return;
   const size = Math.hypot(pts[0][0] - pts[9][0], pts[0][1] - pts[9][1]);
+  const near = (p, m) => p[0] > b.x0 - m && p[0] < b.x1 + m && p[1] > b.y0 - m && p[1] < b.y1 + m;
+  if (!handHolding && !near(pts[4], size * 0.4) && !near(pts[3], size * 0.4)) return;
   // thumb: from its base joint to a little past the tip, so the nail and pad are covered
   const tip = [pts[4][0] + (pts[4][0] - pts[3][0]) * 0.45, pts[4][1] + (pts[4][1] - pts[3][1]) * 0.45];
   const path = [pts[1], pts[2], pts[3], tip];
   og.lineCap = og.lineJoin = 'round';
   og.strokeStyle = '#fff';
-  for (const [w, a] of [[0.36, 0.35], [0.31, 0.7], [0.27, 1]]) {   // soft edge: three widths, fading outward
+  for (const [w, a] of [[0.38, 0.35], [0.33, 0.7], [0.29, 1]]) {   // soft edge: three widths, fading outward
     og.globalAlpha = a; og.lineWidth = size * w;
     og.beginPath(); og.moveTo(...path[0]); for (const p of path.slice(1)) og.lineTo(...p); og.stroke();
   }
   og.globalAlpha = 1;
   og.globalCompositeOperation = 'source-in';               // keep only the camera picture inside the thumb shape
-  const s = Math.max(innerWidth / v.videoWidth, innerHeight / v.videoHeight);
-  og.drawImage(v, (innerWidth - v.videoWidth * s) / 2, (innerHeight - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
+  const w = frameCv.width, h = frameCv.height, s = Math.max(innerWidth / w, innerHeight / h);
+  og.drawImage(frameCv, (innerWidth - w * s) / 2, (innerHeight - h * s) / 2, w * s, h * s);
   og.globalCompositeOperation = 'source-over';
 }
-window.__handFrame = handFrame;            // lets a test feed in a pretend hand
 
 // ---------- her voice: screams, sobs, begging ----------
-// Screams are synthesized: a buzzing "vocal cord" tone shaped by the resonances of an open,
-// screaming mouth, with vibrato, rasp and breath. Words use the phone's own voice, pitched up
-// for her size. voice.mouth (0..1) is how loud she is right now, and drives her jaw.
+// Screams are synthesized once at start (a buzzing "vocal cord" tone shaped by the resonances of
+// an open, screaming mouth, with vibrato, strain and breath) and saved as little sound files.
+// They play through a normal media player, which iPhone's silent switch doesn't mute (it does
+// mute raw web audio). Words use the phone's own voice, pitched up for her size.
+// voice.mouth (0..1) is how loud she is right now and drives her jaw.
 const voice = (() => {
-  let ac = null, out = null, an = null, buf = null, noise = null, muted = false;
-  let mouth = 0, talker = null, busyUntil = 0, nextAt = 2, heldTurn = 0, pendingLine = null;
+  const SR = 22050;
+  const clips = { scream: [], sob: [], yelp: [], big: [] };
+  let player = null, clip = null, queue = [], muted = false, ready = false, talker = null;
+  let mouth = 0, busyUntil = 0, nextAt = 0, heldTurn = 0, pendingLine = null;
   const GROUND = ['Help! Somebody help me!', 'Please, leave me alone!', 'Help me!', "Don't hurt me, please!", 'Somebody, please!'];
   const HELD = ['Put me down! Please put me down!', 'No, no, no, no! Please!', 'Let me go! Please, let me go!',
                 "I'm begging you, put me down!", "Please! Don't drop me!", 'Stop! Please stop!'];
   const LANDED = ["Please... please don't do that again.", 'Why are you doing this to me?', 'Please, just let me go.'];
   const pick = a => a[Math.random() * a.length | 0];
   const talking = () => 'speechSynthesis' in window && speechSynthesis.speaking;
-  function pickVoice() {
-    const vs = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
-    talker = vs.find(v => /samantha|karen|moira|tessa|serena|victoria|zira|aria|jenny|female|google us english/i.test(v.name)) || vs[0] || null;
+
+  function wavUrl(data) {                                  // 16-bit mono WAV file in memory
+    const b = new DataView(new ArrayBuffer(44 + data.length * 2)), str = (o, s) => [...s].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); b.setUint32(4, 36 + data.length * 2, true); str(8, 'WAVEfmt ');
+    b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true);
+    b.setUint32(24, SR, true); b.setUint32(28, SR * 2, true); b.setUint16(32, 2, true); b.setUint16(34, 16, true);
+    str(36, 'data'); b.setUint32(40, data.length * 2, true);
+    for (let i = 0; i < data.length; i++) b.setInt16(44 + i * 2, Math.max(-1, Math.min(1, data[i])) * 0x7fff, true);
+    return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
   }
-  function start() {                       // must run inside the tap that starts the game (iPhone rule)
-    try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; }
-    out = ac.createGain(); an = ac.createAnalyser(); an.fftSize = 512; buf = new Float32Array(an.fftSize);
-    out.connect(an); an.connect(ac.destination);
-    noise = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
-    const ch = noise.getChannelData(0); for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
-    ac.resume();
-    if ('speechSynthesis' in window) {
-      speechSynthesis.speak(new SpeechSynthesisUtterance(' '));   // unlocks speech on iPhone
-      pickVoice(); speechSynthesis.onvoiceschanged = pickVoice;
-    }
-  }
-  function scream(dur, pitch, vol, sob = false) {
-    if (!ac || muted) return;
-    const t = ac.currentTime, f0 = (sob ? 440 : 660) * pitch * (0.92 + Math.random() * 0.16);
-    const src = ac.createOscillator(), f = src.frequency;
+  async function render(dur, pitch, sob = false) {
+    const ac = new OfflineAudioContext(1, Math.ceil(SR * (dur + 0.1)), SR);
+    const f0 = (sob ? 440 : 660) * pitch, src = ac.createOscillator(), f = src.frequency;
     src.type = 'sawtooth';
-    if (sob) { f.setValueAtTime(f0, t); f.linearRampToValueAtTime(f0 * 1.25, t + dur * 0.25); f.exponentialRampToValueAtTime(f0 * 0.7, t + dur); }
-    else { f.setValueAtTime(f0 * 0.75, t); f.exponentialRampToValueAtTime(f0 * 1.2, t + 0.12);
-           f.linearRampToValueAtTime(f0 * 1.05, t + dur * 0.65); f.exponentialRampToValueAtTime(f0 * 0.6, t + dur); }
+    if (sob) { f.setValueAtTime(f0, 0); f.linearRampToValueAtTime(f0 * 1.25, dur * 0.25); f.exponentialRampToValueAtTime(f0 * 0.7, dur); }
+    else { f.setValueAtTime(f0 * 0.75, 0); f.exponentialRampToValueAtTime(f0 * 1.2, 0.12);
+           f.linearRampToValueAtTime(f0 * 1.05, dur * 0.65); f.exponentialRampToValueAtTime(f0 * 0.6, dur); }
     for (const [hz, depth] of [[6.5, 0.035], [11, 0.015]]) {      // vibrato and a nervous wobble
       const l = ac.createOscillator(), g = ac.createGain();
       l.frequency.value = hz * (0.9 + Math.random() * 0.2); g.gain.value = f0 * depth;
-      l.connect(g).connect(f); l.start(t); l.stop(t + dur + 0.1);
+      l.connect(g).connect(f); l.start(0); l.stop(dur + 0.1);
     }
     const shaper = ac.createWaveShaper(), curve = new Float32Array(256);   // vocal strain: soft clipping
     for (let i = 0; i < 256; i++) curve[i] = Math.tanh((i / 128 - 1) * 2.5);
@@ -600,14 +637,55 @@ const voice = (() => {
       bp.type = 'bandpass'; bp.frequency.value = fr; bp.Q.value = q; gg.gain.value = g;
       shaper.connect(bp).connect(gg).connect(env);
     }
+    const nbuf = ac.createBuffer(1, Math.ceil(SR * (dur + 0.1)), SR), ch = nbuf.getChannelData(0);
+    for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
     const n = ac.createBufferSource(), nb = ac.createBiquadFilter(), ng = ac.createGain();   // breath and rasp
-    n.buffer = noise; nb.type = 'bandpass'; nb.frequency.value = 2400; nb.Q.value = 0.8; ng.gain.value = sob ? 0.35 : 0.18;
+    n.buffer = nbuf; nb.type = 'bandpass'; nb.frequency.value = 2400; nb.Q.value = 0.8; ng.gain.value = sob ? 0.35 : 0.18;
     n.connect(nb).connect(ng).connect(env);
-    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(vol, t + 0.05);
-    env.gain.setValueAtTime(vol, t + dur * 0.7); env.gain.linearRampToValueAtTime(0.0001, t + dur);
-    env.connect(out);
-    src.start(t); src.stop(t + dur + 0.05); n.start(t, Math.random()); n.stop(t + dur + 0.05);
-    busyUntil = Math.max(busyUntil, t + dur);
+    env.gain.setValueAtTime(0, 0); env.gain.linearRampToValueAtTime(1, 0.05);
+    env.gain.setValueAtTime(1, dur * 0.7); env.gain.linearRampToValueAtTime(0.0001, dur);
+    env.connect(ac.destination);
+    src.start(0); src.stop(dur + 0.05); n.start(0); n.stop(dur + 0.05);
+    const data = (await ac.startRendering()).getChannelData(0);
+    let peak = 0; for (const x of data) peak = Math.max(peak, Math.abs(x));
+    for (let i = 0; i < data.length; i++) data[i] *= 0.95 / (peak || 1);           // as loud as possible
+    const step = SR / 50, loud = [];                                                // loudness every 20 ms, for her jaw
+    for (let i = 0; i < data.length; i += step) { let s = 0; for (let j = i; j < Math.min(i + step, data.length); j++) s += data[j] * data[j]; loud.push(Math.sqrt(s / step)); }
+    const top = Math.max(...loud) || 1;
+    return { url: wavUrl(data), loud: loud.map(x => x / top), dur };
+  }
+  async function build() {
+    try {
+      for (let i = 0; i < 6; i++) clips.scream.push(await render(0.9 + i * 0.18, 1 + (i % 3) * 0.07));
+      for (let i = 0; i < 3; i++) clips.sob.push(await render(1.2 + i * 0.2, 0.82 + i * 0.05, true));
+      clips.yelp.push(await render(0.4, 0.95));
+      clips.big.push(await render(1.7, 1.15));
+      ready = true;
+    } catch (e) { diag.sound = 'no synth: ' + (e.message || e); }
+  }
+  function pickVoice() {
+    const vs = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
+    talker = vs.find(v => /samantha|karen|moira|tessa|serena|victoria|zira|aria|jenny|female|google us english/i.test(v.name)) || vs[0] || null;
+  }
+  function start() {                       // must run inside the tap that starts the game (iPhone rule)
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+    player = new Audio(); player.setAttribute('playsinline', '');
+    player.src = wavUrl(new Float32Array(SR / 10));       // a moment of silence unlocks the player for later
+    player.play().then(() => { if (!diag.sound.startsWith('blocked')) diag.sound = 'on'; })
+                 .catch(e => diag.sound = 'blocked: ' + e.name);
+    player.onended = () => { if (queue.length) play(queue.shift()); };
+    if ('speechSynthesis' in window) {
+      speechSynthesis.speak(new SpeechSynthesisUtterance(' '));   // unlocks speech on iPhone
+      pickVoice(); speechSynthesis.onvoiceschanged = pickVoice;
+    }
+    build();
+  }
+  function play(kind) {
+    if (!ready || muted || !player || !clips[kind].length) return;
+    clip = pick(clips[kind]);
+    player.src = clip.url;
+    player.play().then(() => diag.sound = 'on').catch(e => diag.sound = 'blocked: ' + e.name);
+    busyUntil = performance.now() + clip.dur * 1000;
   }
   function say(text, urgent) {
     if (muted || !('speechSynthesis' in window)) return;
@@ -620,32 +698,33 @@ const voice = (() => {
   return {
     start,
     get mouth() { return mouth; },
-    toggleMute() { muted = !muted; if (muted && 'speechSynthesis' in window) speechSynthesis.cancel(); return muted; },
-    grabbed() { if ('speechSynthesis' in window) speechSynthesis.cancel(); scream(1.6, 1.15, 0.85); heldTurn = 1; },
-    landed() {
-      scream(0.4, 0.95, 0.6);
-      setTimeout(() => scream(1.4, 0.9, 0.35, true), 450);
-      pendingLine = pick(LANDED); if (ac) nextAt = ac.currentTime + 2.2;
+    get ready() { return ready; },
+    toggleMute() {
+      muted = !muted;
+      if (muted) { player?.pause(); queue.length = 0; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+      return muted;
     },
+    grabbed() { if ('speechSynthesis' in window) speechSynthesis.cancel(); queue.length = 0; play('big'); heldTurn = 1; },
+    landed() { queue = ['sob']; play('yelp'); pendingLine = pick(LANDED); nextAt = performance.now() + 2600; },
     update() {
-      // jaw follows how loud she is right now, or flutters while she's talking
+      // jaw follows the loudness of the scream playing right now, or flutters while she talks
       let level = 0;
-      if (an) { an.getFloatTimeDomainData(buf); let s = 0; for (const x of buf) s += x * x; level = Math.sqrt(s / buf.length) * 4; }
+      if (clip && player && !player.paused) level = clip.loud[Math.floor(player.currentTime * 50)] || 0;
       const talk = talking() ? 0.3 + 0.35 * Math.abs(Math.sin(performance.now() / 85)) : 0;
       mouth += (Math.min(1, Math.max(level, talk)) - mouth) * 0.35;
-      if (!ac || muted) return;
-      const now = ac.currentTime;
-      if (now < busyUntil + 0.25 || talking()) return;
+      if (!ready || muted) return;
+      const now = performance.now();
+      if (now < busyUntil + 250 || talking() || queue.length) return;
       if (state === 'held') {                                     // held: screams and begging, back to back
-        heldTurn++ % 2 ? say(pick(HELD), false) : scream(0.9 + Math.random() * 0.9, 1.08 + Math.random() * 0.2, 0.75);
-        busyUntil = now + 0.4;
+        heldTurn++ % 2 ? say(pick(HELD)) : play('scream');
+        busyUntil = Math.max(busyUntil, now + 400);
       } else if (state === 'ground' && now > nextAt) {            // on the desk: terrified screams, sobs, cries for help
         const r = Math.random();
         if (pendingLine) { say(pendingLine); pendingLine = null; }
-        else if (r < 0.5) scream(0.9 + Math.random() * 0.8, 1, 0.45 + fear * 0.2);
-        else if (r < 0.72) scream(1.3, 0.85, 0.3, true);
+        else if (r < 0.5) play('scream');
+        else if (r < 0.72) play('sob');
         else say(pick(GROUND));
-        nextAt = now + 2 + Math.random() * 4 * (1.3 - fear);
+        nextAt = now + (2 + Math.random() * 4 * (1.3 - fear)) * 1000;
       }
     },
   };
@@ -660,14 +739,14 @@ $('go').onclick = async () => {
   } catch {}
   try {
     if (location.search.includes('desk')) throw new Error('desk preview');
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
     $('cam').srcObject = stream; $('cam').hidden = false; await $('cam').play();
     initHands();
   } catch (e) {
     $('desk').hidden = false;   // no camera (e.g. desktop): fake desk backdrop, drag to look
     $('msg').textContent = 'No camera found. Drag to look around. Click her to pick her up.';
   }
-  $('start').hidden = true; $('ui').hidden = false;
+  $('start').hidden = true; $('ui').hidden = false; $('diag').hidden = false;
   setTimeout(() => { camera.updateMatrixWorld(); placeInFront(); }, 400);   // let the gyro report first
 };
 
@@ -686,7 +765,14 @@ function frame(dt, t) {
   pose(t, dt);
   renderer.render(scene, camera);
   drawThumb();
+  if ((diagT += dt) > 0.25) {
+    diagT = 0;
+    $('diag').textContent = `sound: ${diag.sound}${voice.ready ? '' : ' (preparing)'} · hands: ${diag.hands}` +
+      (diag.fps ? ` ${diag.fps}/s` : '') + ` · hand: ${diag.seen ? 'seen' : 'none'}` +
+      (diag.seen ? ` · gap ${diag.gap.toFixed(2)}` : '') + ` · ${state}`;
+  }
 }
+let diagT = 0;
 document.body.appendChild(occ); sizeOcc();
 addEventListener('resize', sizeOcc);
 renderer.setAnimationLoop(() => { const dt = Math.min(clock.getDelta(), 0.05); frame(dt, clock.elapsedTime); });
