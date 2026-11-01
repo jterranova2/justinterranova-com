@@ -635,6 +635,7 @@ function handFrame(pts) {
     // grab: fingers clearly closing in around her, or already pinched tight
     if (gap < 0.3 || (gap < 0.55 && widest - gap > 0.12 && gap < widest * 0.78)) {
       grab(at); handHolding = true; grabGap = Math.max(gap, 0.25); handDist0 = fd.x; grabDist0 = grabDist; openSince = 0;
+      handTarget = THREE.MathUtils.clamp(fd.x, 0.12, Math.max(0.12, grabDist0));   // your fingers' distance
     }
   } else if (handHolding) {
     // let go only when your fingers have stayed spread for a moment, not on one noisy reading
@@ -706,10 +707,14 @@ function followHand(dt) {
   const k = 1 - Math.exp(-dt / 0.025);                     // a 30 ms glide, so a fresh tracker reading never snaps her
   shown.x += (tx - shown.x) * k; shown.y += (ty - shown.y) * k;
   toNdc({ clientX: shown.x, clientY: shown.y });
-  // Depth stays where she really was when you pinched her: your fingers were at her distance then,
-  // and judging depth from how big your hand looks is too unreliable to keep re-guessing it.
-  grabDist = grabDist0;
+  // Depth: she's pulled up to your fingers, which are usually much nearer the phone than she was on
+  // the desk, so she ends up between them at the right size. After that, only a clear, sustained
+  // change in how far your hand is moves her nearer or farther (hand size is a rough ruler).
+  const want = THREE.MathUtils.clamp(fd.x, 0.12, Math.max(0.12, grabDist0));
+  if (Math.abs(want - handTarget) / handTarget > 0.1) handTarget += (want - handTarget) * (1 - Math.exp(-dt / 0.5));
+  grabDist += (handTarget - grabDist) * (1 - Math.exp(-dt / 0.15));
 }
+let handTarget = 0.4;
 
 window.__handFrame = handFrame;            // lets a test feed in a pretend hand
 window.__frameCv = frameCv;
@@ -733,12 +738,13 @@ function drawThumb() {
   const size = Math.hypot(pts[0][0] - pts[9][0], pts[0][1] - pts[9][1]);
   const near = (p, m) => p[0] > b.x0 - m && p[0] < b.x1 + m && p[1] > b.y0 - m && p[1] < b.y1 + m;
   if (!handHolding && !near(pts[4], size * 0.4) && !near(pts[3], size * 0.4)) return;
-  // thumb: from its base joint to a little past the tip, so the nail and pad are covered
-  const tip = [pts[4][0] + (pts[4][0] - pts[3][0]) * 0.45, pts[4][1] + (pts[4][1] - pts[3][1]) * 0.45];
-  const path = [pts[1], pts[2], pts[3], tip];
+  // just the thumb itself: from its knuckle to a little past the tip (so the nail and pad are
+  // covered), about as wide as a real thumb (~2 cm against a ~9 cm palm)
+  const tip = [pts[4][0] + (pts[4][0] - pts[3][0]) * 0.35, pts[4][1] + (pts[4][1] - pts[3][1]) * 0.35];
+  const path = [pts[2], pts[3], tip];
   og.lineCap = og.lineJoin = 'round';
   og.strokeStyle = '#fff';
-  for (const [w, a] of [[0.38, 0.35], [0.33, 0.7], [0.29, 1]]) {   // soft edge: three widths, fading outward
+  for (const [w, a] of [[0.27, 0.35], [0.24, 0.7], [0.21, 1]]) {   // soft edge: three widths, fading outward
     og.globalAlpha = a; og.lineWidth = size * w;
     og.beginPath(); og.moveTo(...path[0]); for (const p of path.slice(1)) og.lineTo(...p); og.stroke();
   }
