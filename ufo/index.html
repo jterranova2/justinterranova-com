@@ -44,9 +44,10 @@
   <h2>Outside the window</h2>
   <div class="row" id="scenes"></div>
 
-  <h2>Your video</h2>
+  <h2>Festival cam: demo clip, or load your own video</h2>
   <div class="row">
     <label class="file">Load video…<input type="file" id="file" accept="video/*"></label>
+    <button data-act="demo">Demo clip</button>
     <button data-act="videoMode" id="vmode"></button>
     <button data-act="play" id="play">Play / pause</button>
   </div>
@@ -65,6 +66,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ───────────────────────── settings (per-viewer, best effort) ─────────────────────────
 const store = {
@@ -85,7 +87,7 @@ const SCENES = [
   { key: 'festival', label: 'Festival flyover' },
   { key: 'clouds',   label: 'Above the clouds' },
   { key: 'orbit',    label: 'Low orbit' },
-  { key: 'video',    label: 'Your video' },
+  { key: 'video',    label: 'Festival cam' },
 ];
 const VIDEO_MODES = ['flat', '360', '180'];
 const ZONE_SIZES = [0.25, 0.4, 0.7];
@@ -244,6 +246,28 @@ const cabin = buildCabin();
 cabinRoot.add(cabin.group);
 
 // ───────────────────────── scenes outside the window ─────────────────────────
+function makeLedMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uBeat: { value: 0 } },
+    vertexShader: WORLD_VERT,
+    fragmentShader: /* glsl */`
+      uniform float uTime; uniform float uBeat; varying vec2 vUv;
+      void main(){ vec2 uv=vUv;
+        vec3 c = 0.5+0.5*cos(6.2831*(uv.x*1.5+uTime*0.15+vec3(0.0,0.33,0.67)));
+        float bars = step(0.5, fract(uv.y*8.0 - uTime*0.5 + sin(uv.x*6.0+uTime)*0.3));
+        c *= 0.35 + 0.45*bars + 0.6*uBeat;
+        gl_FragColor=vec4(c,1.0); }`,
+  });
+}
+function makeLaserMaterial(hue) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color().setHSL(hue, 1, 0.55) }, uOn: { value: 1 } },
+    vertexShader: `varying float vV; void main(){ vV=uv.y; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `uniform vec3 uColor; uniform float uOn; varying float vV; void main(){ float a=pow(1.0-vV,2.0)*0.85*uOn; gl_FragColor=vec4(uColor*a,a); }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
+}
+const beatAt = (t) => Math.exp(-((t * 128 / 60) % 1) * 7);   // 128 BPM pulse: 1 on the beat, then decays
 function buildFestival() {
   const g = new THREE.Group();
   const sky = makeSky(/* glsl */`
@@ -297,17 +321,7 @@ function buildFestival() {
   // Stage with an animated LED wall
   const stage = new THREE.Mesh(new THREE.BoxGeometry(90, 22, 26), new THREE.MeshBasicMaterial({ color: 0x0d0d14 }));
   stage.position.set(0, 11, -14); pivot.add(stage);
-  const screenMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uBeat: { value: 0 } },
-    vertexShader: WORLD_VERT,
-    fragmentShader: /* glsl */`
-      uniform float uTime; uniform float uBeat; varying vec2 vUv;
-      void main(){ vec2 uv=vUv;
-        vec3 c = 0.5+0.5*cos(6.2831*(uv.x*1.5+uTime*0.15+vec3(0.0,0.33,0.67)));
-        float bars = step(0.5, fract(uv.y*8.0 - uTime*0.5 + sin(uv.x*6.0+uTime)*0.3));
-        c *= 0.35 + 0.45*bars + 0.6*uBeat;
-        gl_FragColor=vec4(c,1.0); }`,
-  });
+  const screenMat = makeLedMaterial();
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(76, 16), screenMat);
   screen.position.set(0, 13, -0.9); pivot.add(screen);
 
@@ -315,13 +329,7 @@ function buildFestival() {
   const laserGeo = new THREE.CylinderGeometry(0.22, 0.22, 260, 6, 1, true); laserGeo.translate(0, 130, 0);
   const lasers = [];
   for (let i = 0; i < 12; i++) {
-    const m = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color().setHSL(i / 12, 1, 0.55) }, uOn: { value: 1 } },
-      vertexShader: `varying float vV; void main(){ vV=uv.y; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-      fragmentShader: `uniform vec3 uColor; uniform float uOn; varying float vV; void main(){ float a=pow(1.0-vV,2.0)*0.85*uOn; gl_FragColor=vec4(uColor*a,a); }`,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    });
-    const l = new THREE.Mesh(laserGeo, m);
+    const l = new THREE.Mesh(laserGeo, makeLaserMaterial(i / 12));
     l.position.set((i - 5.5) * 7, 22, -2); l.userData.i = i; lasers.push(l); pivot.add(l);
   }
   // Haze glow above the crowd
@@ -331,7 +339,7 @@ function buildFestival() {
   return {
     group: g,
     update(t) {
-      const phase = (t * 128 / 60) % 1, beat = Math.exp(-phase * 7);
+      const beat = beatAt(t);
       sky.material.uniforms.uTime.value = t; sky.material.uniforms.uBeat.value = beat;
       crowdMat.uniforms.uTime.value = t; crowdMat.uniforms.uBeat.value = beat;
       screenMat.uniforms.uTime.value = t; screenMat.uniforms.uBeat.value = beat;
@@ -436,14 +444,164 @@ function buildOrbit() {
 const video = document.createElement('video');
 video.loop = true; video.playsInline = true; video.crossOrigin = 'anonymous';
 let videoLoaded = false;
-function placeholderTexture() {
-  const c = document.createElement('canvas'); c.width = 1024; c.height = 576; const x = c.getContext('2d');
-  x.fillStyle = '#0b1020'; x.fillRect(0, 0, 1024, 576);
-  x.fillStyle = '#7fe3ff'; x.font = '600 54px system-ui'; x.textAlign = 'center';
-  x.fillText('No video loaded', 512, 250);
-  x.fillStyle = '#93a3bd'; x.font = '32px system-ui';
-  x.fillText('Use "Load video…" on the 2D page before entering', 512, 320);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+// Demo clip for when no video is loaded: a generated "festival cam" rendered every frame into a 1280×720
+// texture, so it reaches the window by exactly the same path a real video does.
+let demoPaused = false;
+function buildDemoCam() {
+  const W = 1280, H = 720;
+  const rt = new THREE.WebGLRenderTarget(W, H);
+  rt.texture.wrapS = THREE.RepeatWrapping; rt.texture.repeat.x = -1;   // mirrored, same as the flat video texture
+  rt.texture.colorSpace = THREE.SRGBColorSpace;   // store as sRGB so shader colours and material colours both come out as authored
+  const s = new THREE.Scene(); s.fog = new THREE.FogExp2(0x160a26, 0.012);
+  const cam = new THREE.PerspectiveCamera(64, W / H, 0.1, 2000); s.add(cam);
+
+  const sky = makeSky(/* glsl */`
+    uniform float uTime; uniform float uBeat; varying vec3 vDir;
+    void main(){ vec3 d=normalize(vDir); float y=d.y;
+      vec3 col = mix(vec3(0.09,0.04,0.14), vec3(0.01,0.01,0.04), smoothstep(0.0,0.5,y));
+      col += vec3(0.5,0.15,0.45)*exp(-max(y,0.0)*6.0)*(0.6+0.4*uBeat);
+      col += vec3(0.9)*stars(d,240.0,0.98,uTime)*smoothstep(0.1,0.5,y);
+      gl_FragColor=vec4(col,1.0); }`, { uBeat: { value: 0 } });
+  s.add(sky);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshBasicMaterial({ color: 0x0b0812 }));
+  ground.rotation.x = -Math.PI / 2; s.add(ground);
+
+  // Stage straight ahead
+  const STAGE_Z = -90;
+  const stage = new THREE.Mesh(new THREE.BoxGeometry(46, 16, 10), new THREE.MeshBasicMaterial({ color: 0x0c0b12 }));
+  stage.position.set(0, 8, STAGE_Z - 5); s.add(stage);
+  const led = makeLedMaterial();
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(36, 11), led); wall.position.set(0, 9, STAGE_Z + 0.1); s.add(wall);
+  for (const x of [-27, 27]) {   // side screens
+    const side = new THREE.Mesh(new THREE.PlaneGeometry(8, 12), led); side.position.set(x, 10, STAGE_Z + 2); s.add(side);
+  }
+  const laserGeo = new THREE.CylinderGeometry(0.12, 0.12, 160, 6, 1, true); laserGeo.translate(0, 80, 0);
+  const lasers = [];
+  for (let i = 0; i < 10; i++) {
+    const l = new THREE.Mesh(laserGeo, makeLaserMaterial(i / 10));
+    l.position.set((i - 4.5) * 4.2, 16, STAGE_Z + 1); l.userData.i = i; lasers.push(l); s.add(l);
+  }
+  const spotGeo = new THREE.CylinderGeometry(0.15, 4, 34, 20, 1, true); spotGeo.translate(0, -17, 0);
+  const spots = [];
+  for (let i = 0; i < 6; i++) {   // white spotlights from the truss, sweeping the crowd
+    const sp = new THREE.Mesh(spotGeo, makeLaserMaterial(0)); sp.material.uniforms.uColor.value.setRGB(0.55, 0.55, 0.6);
+    sp.position.set((i - 2.5) * 8, 19, STAGE_Z + 6); sp.userData.i = i; spots.push(sp); s.add(sp);
+  }
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: 0xc050ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  glow.scale.set(120, 50, 1); glow.position.set(0, 14, STAGE_Z + 3); s.add(glow);
+
+  // Crowd: silhouettes, some with hands up, jumping on the beat
+  const body = new THREE.CylinderGeometry(0.19, 0.23, 1.4, 6); body.translate(0, 0.7, 0);
+  const head = new THREE.SphereGeometry(0.13, 8, 6); head.translate(0, 1.58, 0);
+  const armL = new THREE.BoxGeometry(0.08, 0.72, 0.08); armL.translate(0, 0.36, 0); armL.rotateZ(0.35); armL.translate(-0.2, 1.34, 0);
+  const armR = new THREE.BoxGeometry(0.08, 0.72, 0.08); armR.translate(0, 0.36, 0); armR.rotateZ(-0.35); armR.translate(0.2, 1.34, 0);
+  // mergeGeometries needs matching attributes; strip to position only (MeshBasicMaterial needs nothing else).
+  const strip = (g) => { const n = g.index ? g.toNonIndexed() : g; for (const k of Object.keys(n.attributes)) if (k !== 'position') n.deleteAttribute(k); return n; };
+  const personGeo = mergeGeometries([body, head].map(strip));
+  const handsUpGeo = mergeGeometries([body, head, armL, armR].map(strip));
+  const crowdMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const N = 2200, people = [];
+  const meshes = [new THREE.InstancedMesh(personGeo, crowdMat, N), new THREE.InstancedMesh(handsUpGeo, crowdMat, N)];
+  const counts = [0, 0], col = new THREE.Color();
+  for (let i = 0; i < N; i++) {
+    const z = STAGE_Z + 8 + 105 * Math.pow(Math.random(), 1.25);   // denser near the stage
+    const x = (Math.random() - 0.5) * (30 + (z - STAGE_Z) * 0.5);
+    const kind = Math.random() < 0.35 ? 1 : 0, idx = counts[kind]++;
+    const v = 0.012 + Math.random() * 0.025; col.setRGB(v, v * 0.9, v * 1.2);
+    meshes[kind].setColorAt(idx, col);
+    people.push({ kind, idx, x, z, yaw: (Math.random() - 0.5) * 0.8, sc: 0.9 + Math.random() * 0.22, seed: Math.random(), jumper: Math.random() < 0.45 });
+  }
+  meshes.forEach((m, k) => { m.count = counts[k]; m.instanceColor.needsUpdate = true; m.frustumCulled = false; s.add(m); });
+
+  // Phone screens held up in the crowd
+  const PN = 260, phonePos = new Float32Array(PN * 3);
+  for (let i = 0; i < PN; i++) { const p = people[(Math.random() * N) | 0]; phonePos.set([p.x + 0.25, 2.05 + Math.random() * 0.2, p.z], i * 3); }
+  const phoneGeo = new THREE.BufferGeometry(); phoneGeo.setAttribute('position', new THREE.BufferAttribute(phonePos, 3));
+  s.add(new THREE.Points(phoneGeo, new THREE.PointsMaterial({ color: 0xfff6e8, size: 0.09, map: GLOW, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })));
+
+  // Confetti drifting around the camera
+  const CN = 900, cPos = new Float32Array(CN * 3), cCol = new Float32Array(CN * 3);
+  for (let i = 0; i < CN; i++) { col.setHSL(Math.random(), 1, 0.6); cCol.set([col.r, col.g, col.b], i * 3); cPos.set([0, -100, 0], i * 3); }
+  const confGeo = new THREE.BufferGeometry();
+  confGeo.setAttribute('position', new THREE.BufferAttribute(cPos, 3)); confGeo.setAttribute('color', new THREE.BufferAttribute(cCol, 3));
+  const confetti = new THREE.Points(confGeo, new THREE.PointsMaterial({ size: 0.06, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }));
+  confetti.frustumCulled = false; s.add(confetti);
+  let confettiAt = 0;
+
+  // "REC" overlay so it reads as phone footage
+  const recC = document.createElement('canvas'); recC.width = 256; recC.height = 64; const rx = recC.getContext('2d');
+  const recTex = new THREE.CanvasTexture(recC); recTex.colorSpace = THREE.SRGBColorSpace;
+  const rec = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.04), new THREE.MeshBasicMaterial({ map: recTex, transparent: true, depthTest: false, fog: false, toneMapped: false }));
+  rec.position.set(-0.52, 0.27, -0.6); rec.renderOrder = 10; cam.add(rec);
+  let recSec = -1;
+
+  const _mm = new THREE.Matrix4(), _qq = new THREE.Quaternion(), _pp = new THREE.Vector3(), _ss = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+  const look = new THREE.Vector3();
+  let time = 0;
+  return {
+    texture: rt.texture,
+    update(dt) {
+      time += dt; const t = time, beat = beatAt(t), bp = (t * 128 / 60) % 1;
+      // Selfie-stick camera: held ~2.7 m up, walking slowly toward the stage, bobbing and swaying.
+      // The clip "cuts" back to the start every 75 s, like a looping video.
+      const walk = (t * 0.7) % 52.5;
+      cam.position.set(Math.sin(t * 0.13) * 3 + Math.sin(t * 0.9) * 0.05, 2.7 + Math.sin(t * 5.4) * 0.035 + Math.sin(t * 0.4) * 0.12, 12 - walk);
+      look.set(Math.sin(t * 0.21) * 7 + Math.sin(t * 0.05) * 10, 6 + Math.sin(t * 0.17) * 2, STAGE_Z);
+      cam.lookAt(look);
+      cam.rotateZ(Math.sin(t * 0.7) * 0.035 + Math.sin(t * 2.3) * 0.006);   // hand roll + jitter
+      cam.rotateX(Math.sin(t * 3.1) * 0.004); cam.rotateY(Math.sin(t * 2.7) * 0.004);
+
+      sky.material.uniforms.uTime.value = t; sky.material.uniforms.uBeat.value = beat;
+      led.uniforms.uTime.value = t; led.uniforms.uBeat.value = beat;
+      glow.material.opacity = 0.35 + beat * 0.3;
+      const section = Math.floor(t / 15) % 3;
+      for (const l of lasers) {
+        const i = l.userData.i;
+        l.rotation.x = 0.55 + Math.sin(t * 0.7 + i * 0.4) * 0.3;
+        l.rotation.z = section === 2 ? Math.sin(t * 2 + i) * 0.8 : (i - 4.5) * 0.12 + Math.sin(t * 0.9) * 0.35;
+        l.material.uniforms.uOn.value = section === 0 ? 0.4 + beat * 0.6 : 0.9;
+        l.material.uniforms.uColor.value.setHSL((i / 10 + t * 0.04) % 1, 1, 0.55);
+      }
+      for (const sp of spots) { const i = sp.userData.i; sp.rotation.x = -0.5 + Math.sin(t * 0.5 + i) * 0.35; sp.rotation.z = Math.sin(t * 0.33 + i * 1.7) * 0.45; sp.material.uniforms.uOn.value = 0.12 + beat * 0.08; }
+      crowdMat.color.setRGB(0.45 + beat * 0.7, 0.4 + beat * 0.35, 0.55 + beat * 0.7);   // stage light washing over the crowd
+
+      const jump = Math.max(0, Math.sin(bp * Math.PI * 2)) ** 1.5 * 0.28;
+      for (const p of people) {
+        const y = p.jumper ? jump * (0.7 + p.seed * 0.6) : Math.sin(t * 2 + p.seed * 9) * 0.02;
+        _qq.setFromAxisAngle(up, p.yaw + Math.sin(t * 0.8 + p.seed * 7) * 0.15);
+        _mm.compose(_pp.set(p.x, y, p.z), _qq, _ss.setScalar(p.sc));
+        meshes[p.kind].setMatrixAt(p.idx, _mm);
+      }
+      meshes[0].instanceMatrix.needsUpdate = meshes[1].instanceMatrix.needsUpdate = true;
+
+      // A confetti burst every 30 s, then it drifts down
+      if (t >= confettiAt) {
+        confettiAt = t + 30;
+        for (let i = 0; i < CN; i++) cPos.set([cam.position.x + (Math.random() - 0.5) * 16, 8 + Math.random() * 6, cam.position.z - 2 - Math.random() * 18], i * 3);
+      }
+      for (let i = 0; i < CN; i++) {
+        cPos[i * 3] += Math.sin(t * 1.5 + i) * 0.004; cPos[i * 3 + 1] -= dt * (0.5 + (i % 7) * 0.08);
+        if (cPos[i * 3 + 1] < 0) cPos[i * 3 + 1] = -100;
+      }
+      confGeo.attributes.position.needsUpdate = true;
+
+      const sec = Math.floor(walk / 0.7);
+      if (sec !== recSec) {
+        recSec = sec; rx.clearRect(0, 0, 256, 64);
+        rx.fillStyle = sec % 2 ? '#ff3b3b' : 'rgba(255,59,59,0.35)'; rx.beginPath(); rx.arc(22, 32, 11, 0, Math.PI * 2); rx.fill();
+        rx.fillStyle = '#fff'; rx.font = '600 30px system-ui';
+        rx.fillText('REC  ' + String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0'), 44, 43);
+        recTex.needsUpdate = true;
+      }
+    },
+    render() {
+      // During a headset session, switch XR off for a moment so this draws into our texture, then restore it.
+      const prev = renderer.getRenderTarget(), xrOn = renderer.xr.enabled;
+      renderer.xr.enabled = false;
+      renderer.setRenderTarget(rt); renderer.render(s, cam);
+      renderer.xr.enabled = xrOn; renderer.setRenderTarget(prev);
+    },
+  };
 }
 function buildVideo() {
   const g = new THREE.Group();
@@ -451,14 +609,13 @@ function buildVideo() {
     uniform float uTime; varying vec3 vDir;
     void main(){ vec3 d=normalize(vDir); vec3 col=vec3(0.01,0.012,0.025)+vec3(0.9)*stars(d,220.0,0.975,uTime)*0.8; gl_FragColor=vec4(col,1.0); }`);
   g.add(sky);
-  const placeholder = placeholderTexture();
-  const placeholderFlat = placeholderTexture(); placeholderFlat.wrapS = THREE.RepeatWrapping; placeholderFlat.repeat.x = -1;
+  const demo = buildDemoCam();
   const vtexFlat = new THREE.VideoTexture(video); vtexFlat.colorSpace = THREE.SRGBColorSpace;
   vtexFlat.wrapS = THREE.RepeatWrapping; vtexFlat.repeat.x = -1;   // seen from inside the cylinder, so mirror it back
   const vtexSphere = new THREE.VideoTexture(video); vtexSphere.colorSpace = THREE.SRGBColorSpace;
 
   const RAD = 30, ARC = THREE.MathUtils.degToRad(80);
-  const flatMat = new THREE.MeshBasicMaterial({ map: placeholderFlat, side: THREE.BackSide, toneMapped: false });
+  const flatMat = new THREE.MeshBasicMaterial({ map: demo.texture, side: THREE.BackSide, toneMapped: false });
   const flat = new THREE.Mesh(new THREE.BufferGeometry(), flatMat);
   function sizeFlat(aspect) {
     const h = (RAD * ARC) / aspect;
@@ -468,7 +625,7 @@ function buildVideo() {
   }
   sizeFlat(16 / 9); g.add(flat);
 
-  const sphMat = new THREE.MeshBasicMaterial({ map: placeholder, toneMapped: false });
+  const sphMat = new THREE.MeshBasicMaterial({ toneMapped: false });
   const g360 = new THREE.SphereGeometry(60, 96, 48); g360.scale(-1, 1, 1);
   const g180 = new THREE.SphereGeometry(60, 64, 48, Math.PI / 2, Math.PI); g180.scale(-1, 1, 1);
   const sph = new THREE.Mesh(g360, sphMat); sph.rotation.y = -Math.PI / 2; sph.position.y = 1.2; g.add(sph);
@@ -477,14 +634,16 @@ function buildVideo() {
     group: g,
     sizeFlat,
     refresh() {
-      const mode = settings.videoMode;
+      const mode = videoLoaded ? settings.videoMode : 'flat';   // the demo clip is ordinary 16:9 footage
       flat.visible = mode === 'flat'; sph.visible = mode !== 'flat';
       sph.geometry = mode === '180' ? g180 : g360;
-      flatMat.map = videoLoaded ? vtexFlat : placeholderFlat; flatMat.needsUpdate = true;
-      sphMat.map = videoLoaded ? vtexSphere : placeholder; sphMat.needsUpdate = true;
+      if (!videoLoaded) sizeFlat(16 / 9);
+      flatMat.map = videoLoaded ? vtexFlat : demo.texture; flatMat.needsUpdate = true;
+      sphMat.map = videoLoaded ? vtexSphere : null; sphMat.needsUpdate = true;
     },
-    update(t) {
+    update(t, dt) {
       sky.material.uniforms.uTime.value = t;
+      if (!videoLoaded) { if (!demoPaused) demo.update(dt); demo.render(); }
       // In an immersive session the page's own video-frame callbacks may not fire, so push frames ourselves.
       if (videoLoaded && !video.paused && video.readyState >= 2) { vtexFlat.needsUpdate = true; vtexSphere.needsUpdate = true; }
     },
@@ -745,7 +904,7 @@ SCENES.forEach((s, i) => BTN.push({ id: 'scene:' + s.key, x: 32 + i * 242, y: 96
 function btnLabel(id) {
   if (id.startsWith('scene:')) return SCENES.find(s => 'scene:' + s.key === id).label;
   return {
-    videoMode: 'Video: ' + settings.videoMode, play: video.paused ? 'Play video' : 'Pause video', rotate: 'Rotate ship ↻ 15°',
+    videoMode: 'Video: ' + settings.videoMode, play: videoLoaded ? (video.paused ? 'Play video' : 'Pause video') : (demoPaused ? 'Play demo clip' : 'Pause demo clip'), rotate: 'Rotate ship ↻ 15°',
     mark: markMode ? 'Marking… (pinch at it)' : 'Mark real zone', size: 'Zone size: ' + Math.round(settings.zoneSize * 100) + ' cm',
     clear: 'Clear real zones', floor: 'Real floor: ' + (settings.realFloor ? 'on' : 'off'),
     outline: 'Room outline: ' + (settings.outline ? 'on' : 'off'), rescan: 'Rescan room',
@@ -819,7 +978,8 @@ function doAction(id) {
   if (id.startsWith('scene:')) { warpTo(id.slice(6)); return; }
   switch (id) {
     case 'videoMode': settings.videoMode = VIDEO_MODES[(VIDEO_MODES.indexOf(settings.videoMode) + 1) % 3]; built.video?.refresh(); break;
-    case 'play': if (!videoLoaded) { setStatus('Load a video on the 2D page first'); break; }
+    case 'demo': videoLoaded = false; video.pause(); demoPaused = false; built.video?.refresh(); warpTo('video'); setStatus('Playing the demo festival cam'); break;
+    case 'play': if (!videoLoaded) { demoPaused = !demoPaused; if (settings.scene !== 'video') warpTo('video'); break; }
       if (video.paused) { video.play(); if (settings.scene !== 'video') warpTo('video'); } else video.pause(); break;
     case 'rotate': settings.yaw = (settings.yaw + 15) % 360; break;
     case 'mark': markMode = !markMode; setStatus(markMode ? 'Hold your hand or controller at the thing, then pinch / pull the trigger' : ''); break;

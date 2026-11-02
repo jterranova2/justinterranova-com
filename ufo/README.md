@@ -32,5 +32,7 @@ Then open `http://localhost:8080` in the Quest browser. To the headset, `localho
 - **Rotate ship 15°**: turns the whole ship until the window lines up behind your desk.
 - **Mark real zone**: hold your hand at your mug or keyboard and pinch. That spot stays real, and it's saved as a
   persistent anchor, so it's still there next time.
+- **Festival cam**: plays a generated demo clip (a phone on a selfie stick drifting through a crowd toward a stage)
+  until you load real footage. *Demo clip* switches back to it.
 - **Your video**: load a clip on the 2D page *before* boarding. You can load it from the headset's storage, so
   copy festival footage to the Quest first. 2:1 videos are auto-detected as 360°; use *Type* to switch flat / 360 / 180.
