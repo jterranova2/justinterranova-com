@@ -1478,10 +1478,163 @@ function updateDepth(frame, ref) {
   }).sort((a, b) => a.dist - b.dist).slice(0, MAX_WALLS);
   depthMat.uniforms.uWalls.value.forEach((w, i) => walls[i] ? w.set(walls[i].n.x, walls[i].n.y, walls[i].n.z, walls[i].d) : w.set(0, 0, 0, 1e9));
   depthShell.position.copy(headPose().head);
-  depthMat.uniforms.uOn.value = 1; depthOK = true;
+  // once clean panels are up they replace the pixel-by-pixel cutout (the colour debug view still shows it)
+  depthMat.uniforms.uOn.value = panels.length && !depthMat.uniforms.uDebug.value ? 0 : 1; depthOK = true;
   if (!state.depthOn) { state.depthOn = true; rebuildPlanes(); console.info('[ufo] live depth on: whatever stands on the desk stays real'); }
 }
 
+// ───────────────────────── monitor panels: find each screen in the depth, draw a clean frame around it ─────────────────────────
+// Twice a second, the depth map is turned into 3D points (on the GPU, into a small float image), and the points
+// standing tall on the desk are gathered into a 3 cm grid that remembers the last few seconds. Each connected lump
+// is a monitor (or a row of them): seen from above, its front face is a line, and every bend in that line is where
+// one screen meets the next. Each straight piece becomes a clean rectangle with a black frame. Panels then replace
+// the pixel-by-pixel cutout, so the view is steady.
+const CAP = 128;
+const capRT = new THREE.WebGLRenderTarget(CAP, CAP, { type: THREE.FloatType, format: THREE.RGBAFormat, depthBuffer: false });
+const capU = depthMat.uniforms;
+const capMat = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  uniforms: { uDepth: capU.uDepth, uDepthInvVP: capU.uDepthInvVP, uRaw: capU.uRaw, uNearD: capU.uNearD, uNearP: capU.uNearP,
+    uTop: capU.uTop, uCenter: capU.uCenter, uE: capU.uE, uU: capU.uU, uBounds: capU.uBounds, uWalls: capU.uWalls },
+  vertexShader: /* glsl */`varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: /* glsl */`
+    precision highp float; precision highp sampler2DArray;
+    layout(location = 0) out vec4 outColor;
+    uniform sampler2DArray uDepth; uniform mat4 uDepthInvVP[2];
+    uniform float uRaw, uNearD, uNearP, uTop; uniform vec3 uCenter, uE, uU; uniform vec4 uBounds; uniform vec4 uWalls[${MAX_WALLS}];
+    varying vec2 vUv;
+    void main() {
+      outColor = vec4(0.0);
+      float d = texture(uDepth, vec3(vUv, 0.0)).r * uRaw;
+      if (d <= 0.0 || d >= 1.0) return;
+      float dist = uNearD / (1.0 - d);
+      vec4 p4 = uDepthInvVP[0] * vec4(vUv * 2.0 - 1.0, 1.0 - 2.0 * uNearP / dist, 1.0); vec3 P = p4.xyz / p4.w;
+      if (P.y < uTop + 0.1 || P.y > uTop + 0.8) return;          // tall things only: screens, not the keyboard or a mug
+      vec3 q = P - uCenter; float e = dot(q, uE), u = dot(q, uU);
+      if (e < uBounds.x || e > uBounds.y || u < uBounds.z || u > uBounds.w) return;
+      for (int i = 0; i < ${MAX_WALLS}; i++) if (abs(dot(uWalls[i].xyz, P) + uWalls[i].w) < 0.07) return;
+      outColor = vec4(P, 1.0);
+    }`,
+  depthTest: false, depthWrite: false,
+});
+const capScene = new THREE.Scene(); capScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), capMat));
+const capCam = new THREE.Camera();
+const capPx = new Float32Array(CAP * CAP * 4);
+const VOX = 0.03;
+let vox = new Map();          // "i,j,k" → { n, x, y, z, t }
+let panels = [];              // { obj, c: Vector3, e: Vector3, w, h, t }
+let capAt = 0;
+function resetPanels() { for (const p of panels) disposeObj(p.obj); panels = []; vox = new Map(); }
+function capturePanels() {
+  if (!depthOK || clock.t < capAt) return;
+  capAt = clock.t + 0.5;
+  const xrOn = renderer.xr.enabled; renderer.xr.enabled = false;
+  const prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(capRT); renderer.render(capScene, capCam);
+  renderer.readRenderTargetPixels(capRT, 0, 0, CAP, CAP, capPx);
+  renderer.setRenderTarget(prev); renderer.xr.enabled = xrOn;
+  const now = clock.t;
+  for (let i = 0; i < CAP * CAP; i++) {
+    if (capPx[i * 4 + 3] < 0.5) continue;
+    const x = capPx[i * 4], y = capPx[i * 4 + 1], z = capPx[i * 4 + 2];
+    const k = Math.floor(x / VOX) + ',' + Math.floor(y / VOX) + ',' + Math.floor(z / VOX);
+    const v = vox.get(k);
+    if (v) { v.n++; v.x += x; v.y += y; v.z += z; v.t = now; } else vox.set(k, { n: 1, x, y, z, t: now });
+  }
+  for (const [k, v] of vox) if (now - v.t > 20) vox.delete(k);   // forget what hasn't been seen for a while
+  fitPanels();
+}
+function fitPanels() {
+  const { head } = headPose();
+  const cells = [...vox.entries()].filter(([, v]) => v.n >= 3);
+  const key = new Map(cells), seen = new Set(), found = [];
+  for (const [k0] of cells) {
+    if (seen.has(k0)) continue;
+    const lump = [], st = [k0]; seen.add(k0);
+    while (st.length) {
+      const k = st.pop(), v = key.get(k); lump.push(new THREE.Vector3(v.x / v.n, v.y / v.n, v.z / v.n));
+      const [i, j, l] = k.split(',').map(Number);
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+        const n = (i + a) + ',' + (j + b) + ',' + (l + c);
+        if (key.has(n) && !seen.has(n)) { seen.add(n); st.push(n); }
+      }
+    }
+    if (lump.length < 12) continue;
+    found.push(...splitScreens(lump, head));
+  }
+  // keep panels steady: nudge a matching one toward the new fit, or add a new one
+  for (const f of found) {
+    const p = panels.find(p => p.c.distanceTo(f.c) < 0.2 && Math.abs(p.e.dot(f.e)) > 0.85);
+    if (p) {
+      if (p.e.dot(f.e) < 0) f.e.negate();
+      p.c.lerp(f.c, 0.3); p.e.lerp(f.e, 0.3).normalize(); p.t = clock.t;
+      const w = p.w + (f.w - p.w) * 0.3, h = p.h + (f.h - p.h) * 0.3;
+      if (Math.abs(w - p.w) > 0.01 || Math.abs(h - p.h) > 0.01) { disposeObj(p.obj); p.obj = makeSkinObj(w, h, 'screen'); p.w = w; p.h = h; }
+      placePanel(p);
+    } else { const q = { ...f, obj: makeSkinObj(f.w, f.h, 'screen'), t: clock.t }; placePanel(q); panels.push(q); }
+  }
+}
+function placePanel(p) {
+  const n = new THREE.Vector3(p.e.z, 0, -p.e.x);       // facing you
+  const { head } = headPose();
+  if (n.dot(new THREE.Vector3(head.x - p.c.x, 0, head.z - p.c.z)) < 0) { p.e.negate(); n.negate(); }
+  p.obj.matrix.makeBasis(p.e, new THREE.Vector3(0, 1, 0), n).setPosition(p.c); p.obj.matrixWorldNeedsUpdate = true;
+}
+// One lump of screen points → one rectangle per flat screen in it.
+function splitScreens(pts, head) {
+  // main direction across the lump, seen from above
+  let mx = 0, mz = 0; for (const p of pts) { mx += p.x; mz += p.z; } mx /= pts.length; mz /= pts.length;
+  let sxx = 0, sxz = 0, szz = 0; for (const p of pts) { const dx = p.x - mx, dz = p.z - mz; sxx += dx * dx; sxz += dx * dz; szz += dz * dz; }
+  const ang = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+  const a = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang));
+  let n = new THREE.Vector3(a.z, 0, -a.x); if (n.dot(new THREE.Vector3(head.x - mx, 0, head.z - mz)) < 0) n.negate();
+  // front face, seen from above: for each 3 cm slice across, the point nearest you
+  const bins = new Map();
+  for (const p of pts) {
+    const s = (p.x - mx) * a.x + (p.z - mz) * a.z, f = (p.x - mx) * n.x + (p.z - mz) * n.z, b = Math.round(s / 0.03);
+    const cur = bins.get(b); if (!cur || f > cur.f) bins.set(b, { s, f, x: p.x, z: p.z });
+  }
+  const line = [...bins.values()].sort((p, q) => p.s - q.s);
+  if (line.length < 4) return [];
+  // split where the front face bends (one straight piece per screen)
+  const pieces = [];
+  (function split(i0, i1) {
+    const A = line[i0], B = line[i1], dx = B.x - A.x, dz = B.z - A.z, L = Math.hypot(dx, dz) || 1;
+    let worst = -1, wd = 0;
+    for (let i = i0 + 1; i < i1; i++) { const d = Math.abs((line[i].x - A.x) * dz - (line[i].z - A.z) * dx) / L; if (d > wd) { wd = d; worst = i; } }
+    if (wd > 0.045 && worst > i0 + 1 && worst < i1 - 1) { split(i0, worst); split(worst, i1); } else pieces.push([i0, i1]);
+  })(0, line.length - 1);
+  const out = [];
+  for (const [i0, i1] of pieces) {
+    const A = line[i0], B = line[i1], w = Math.hypot(B.x - A.x, B.z - A.z);
+    if (w < 0.18) continue;
+    const e = new THREE.Vector3(B.x - A.x, 0, B.z - A.z).normalize();
+    // its height: rows (3 cm) of points in this piece, dropping the thin stand below the screen
+    const s0 = A.s, s1 = B.s, rows = new Map();
+    for (const p of pts) {
+      const s = (p.x - mx) * a.x + (p.z - mz) * a.z; if (s < s0 || s > s1) continue;
+      const r = Math.round(p.y / 0.03); rows.set(r, (rows.get(r) || 0) + 1);
+    }
+    const peak = Math.max(...rows.values()), kept = [...rows.entries()].filter(([, c]) => c >= peak * 0.4).map(([r]) => r * 0.03);
+    const y0 = Math.min(...kept) - 0.015, y1 = Math.max(...kept) + 0.015, h = y1 - y0;
+    if (h < 0.12 || h > 0.8) continue;
+    const c = new THREE.Vector3((A.x + B.x) / 2, (y0 + y1) / 2, (A.z + B.z) / 2);
+    out.push({ c, e, w, h });
+  }
+  return out;
+}
+
+// Where the menu and the Claude panel live: up at screen height, just left of everything on your desk.
+function sideSpot(rise) {
+  const d = desk || scanDesk, dg = deskGeom(); if (!d || !dg) return null;
+  const { head } = headPose();
+  const fwd = new THREE.Vector3(-Math.sin(d.theta), 0, -Math.cos(d.theta)), left = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), fwd);
+  let edge = -Infinity;    // the leftmost thing standing on the desk (your left speaker), else the desk's left end
+  for (const [, v] of vox) if (v.n >= 3) edge = Math.max(edge, new THREE.Vector3(v.x / v.n - head.x, 0, v.z / v.n - head.z).dot(left));
+  if (edge === -Infinity) for (const [p] of dg.edges) edge = Math.max(edge, new THREE.Vector3(p.x - head.x, 0, p.z - head.z).dot(left) - 0.15);
+  const p = head.clone().addScaledVector(left, Math.min(edge + 0.22, 1.1)).addScaledVector(fwd, 0.55); p.y = dg.top + rise;
+  return p;
+}
 // ───────────────────────── in-headset menu ─────────────────────────
 const MW = 1024, MH = 744;
 const mCanvas = document.createElement('canvas'); mCanvas.width = MW; mCanvas.height = MH;
@@ -1536,11 +1689,22 @@ function recallMenu() {
   const fwd = d ? new THREE.Vector3(-Math.sin(d.theta), 0, -Math.cos(d.theta))
     : new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())).setY(0).normalize();
   const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0));
-  if (d) { menu.position.copy(head).addScaledVector(fwd, 0.25).addScaledVector(right, 0.6); menu.position.y = head.y - 0.4; menu.scale.setScalar(0.65); }
+  const spot = d && sideSpot(0.32);
+  if (spot) { menu.position.copy(spot); menu.scale.setScalar(0.6); }
   else { menu.position.copy(head).addScaledVector(fwd, 0.55).addScaledVector(right, 0.3); menu.position.y = head.y - 0.28; menu.scale.setScalar(1); }
-  menu.lookAt(head); menu.visible = true; menuUse = clock.t; menuDocked = !!d;
+  menu.lookAt(head); menu.visible = true; menuUse = clock.t; menuDocked = !!spot;
 }
-let menuDocked = false;
+let menuDocked = false, menuRedocked = false;
+// The Claude panel (drawn by the bridge kit) goes just above the menu.
+function placeClaude() {
+  const p = window.__ufoShell.scene.getObjectByName('xr-bridge-panel'), spot = sideSpot(0.62); if (!p || !spot) return;
+  p.position.copy(spot); p.scale.setScalar(0.85); p.lookAt(headPose().head);
+  if (!p.userData.pinned) {   // older kits tuck the panel away when idle; keep it showing
+    p.userData.pinned = true; let v = true;
+    Object.defineProperty(p, 'visible', { get: () => renderer.xr.isPresenting && v !== null, set: x => { if (x === null) v = null; }, configurable: true });
+  }
+}
+if (window.__xrBridgeApp) window.__xrBridgeApp.panelSpot = () => { const s = sideSpot(0.62); return s && { position: s, lookAt: headPose().head }; };
 
 // ───────────────────────── controllers / pointing ─────────────────────────
 const raycaster = new THREE.Raycaster();
@@ -1599,7 +1763,7 @@ function doAction(id) {
     case 'outline': settings.outline = !settings.outline; break;
     case 'desk': startCalib(); break;
     case 'gear': gearMode ? endGear() : startGear(); break;
-    case 'auto': if (renderer.xr.getSession()?.enabledFeatures?.includes('mesh-detection')) { meshCheckAt = 0; if (meshGear) meshGear.key = null; setStatus('Re-moulding to your room mesh…'); } else startAutoScan(); break;
+    case 'auto': resetPanels(); menuRedocked = false; if (renderer.xr.getSession()?.enabledFeatures?.includes('mesh-detection')) { meshCheckAt = 0; if (meshGear) meshGear.key = null; setStatus('Re-moulding to your room mesh…'); } else startAutoScan(); break;
     case 'scan': settings.useScan = !settings.useScan; if (!settings.useScan) clearPlanes(); break;
     case 'rescan': {
       const s = renderer.xr.getSession();
@@ -1676,7 +1840,7 @@ function onSessionStart(session, resumed) {
   session.addEventListener('end', () => {
     fakeRoom.visible = true; menu.visible = false; controls.enabled = true;
     for (const z of zones) disposeObj(z.obj); zones = [];
-    disposeGear(); disposeMeshGear(); state.depthOn = false; gearMode = null; autoScan = null; autoTried = false; autoAt = Infinity; if (sense) sense.closeCamera(state);
+    disposeGear(); disposeMeshGear(); resetPanels(); state.depthOn = false; gearMode = null; autoScan = null; autoTried = false; autoAt = Infinity; if (sense) sense.closeCamera(state);
     disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = state.scanDesk = null; tip.visible = false; state.floorLevel = null; cabinRoot.position.y = 0; calibMarkers.clear(); applyVisibility();
     for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear();
     state.anchors = {}; state.menuPose = null;
@@ -1708,6 +1872,7 @@ function frameFn(now, frame) {
     autoScanFrame(frame, ref);
     if (settings.useScan) syncMeshGear(frame, ref);
     updateDepth(frame, ref);
+    capturePanels();
     if (!planesSeen && !settings.desk && settings.useScan && planeCheckAt && t > planeCheckAt) { setStatus('No room scan found. Try "Rescan room" so your desk stays real.'); planeCheckAt = 0; }
     for (const z of zones) {
       if (z.anchor && frame.trackedAnchors?.has(z.anchor)) {
@@ -1727,11 +1892,13 @@ function frameFn(now, frame) {
     });
     if (changed) drawMenu();
     if (!menuDocked && (desk || scanDesk)) recallMenu();   // move it to the side console once the desk is known
+    if (!menuRedocked && panels.length && t > 6) { menuRedocked = true; recallMenu(); placeClaude(); }   // and again once the gear is found
   } else controls.update();
 }
 
 // ───────────────────────── mount / dispose ─────────────────────────
 function dispose() {
+  capRT.dispose();
   renderer.properties.remove(depthTex);   // the Quest owns that texture: don't let the cleanup below delete it
   ac.abort();
   for (const [t, type, fn] of xrListeners) t.removeEventListener(type, fn);
@@ -1759,7 +1926,7 @@ function describe() {
     detectedPlanes: [...planeObjs.values()].map(r => r.obj.userData.label),
     markMode, menuVisible: menu.visible, status: statusText,
     desk: desk ? { center: new THREE.Vector3().setFromMatrixPosition(desk.matrix).toArray().map(v => +v.toFixed(3)), yawDeg: +(desk.theta * 180 / Math.PI).toFixed(1), widthM: +settings.desk.width.toFixed(2), monitors: settings.desk.monitors.length, anchored: !!deskAnchor } : (settings.desk ? 'saved but not found yet' : 'not set'),
-    framedGear: gear.map(g => ({ kind: g.rec.kind || 'by hand', w: g.rec.w, h: g.rec.h, anchored: !!g.anchor })), liveDepth: depthOK ? 'on' : (renderer.xr.getSession()?.enabledFeatures?.includes('depth-sensing') ? 'enabled, no data yet' : 'not enabled this session'), meshGear: meshGear ? { triangles: meshGear.tris } : (renderer.xr.getSession()?.enabledFeatures?.includes('mesh-detection') ? 'waiting for the room mesh' : 'mesh not enabled this session'), findingGear: autoScan ? { frames: autoScan.frames, secondsLeft: +(autoScan.until - clock.t).toFixed(1) } : null, camCal: settings.camCal, skinDesk: skinDesk(), framing: gearMode ? (gearMode.first ? 'bottom-right corner' : 'top-left corner') : null,
+    framedGear: gear.map(g => ({ kind: g.rec.kind || 'by hand', w: g.rec.w, h: g.rec.h, anchored: !!g.anchor })), monitorPanels: panels.map(p => ({ w: +p.w.toFixed(2), h: +p.h.toFixed(2), at: p.c.toArray().map(v => +v.toFixed(2)) })), liveDepth: depthOK ? 'on' : (renderer.xr.getSession()?.enabledFeatures?.includes('depth-sensing') ? 'enabled, no data yet' : 'not enabled this session'), meshGear: meshGear ? { triangles: meshGear.tris } : (renderer.xr.getSession()?.enabledFeatures?.includes('mesh-detection') ? 'waiting for the room mesh' : 'mesh not enabled this session'), findingGear: autoScan ? { frames: autoScan.frames, secondsLeft: +(autoScan.until - clock.t).toFixed(1) } : null, camCal: settings.camCal, skinDesk: skinDesk(), framing: gearMode ? (gearMode.first ? 'bottom-right corner' : 'top-left corner') : null,
     settingDesk: calib ? ['front-left corner', 'front-right corner', 'saving'][calib.step] : monitorMode ? 'monitors (optional)' : null, useQuestScan: settings.useScan,
     scanDesk: scanDesk ? { yawDeg: +(scanDesk.theta * 180 / Math.PI).toFixed(1), seat: scanDesk.seat.toArray().map(v => +v.toFixed(2)) } : null,
   };
