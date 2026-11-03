@@ -26,7 +26,8 @@ const settings = {
   zoneSize: store.get('zoneSize', 0.4),
   gear: store.get('gear', []),
   camCal: store.get('camCal', null),      // how the headset camera is aimed (fitted automatically)
-  skinDesk: store.get('skinDesk', true),  // once the keyboard is found, the desk top becomes skin too
+  skinDesk: store.get('skinDesk', true),
+  screens: store.get('screens', null),    // your monitors, learned once and kept (desk-relative)  // once the keyboard is found, the desk top becomes skin too
              // monitors and speakers you framed
   desk: store.get('desk', null),         // set by touching the desk corners
   useScan: store.get('useScan', true),    // also trust the Quest's own room scan?
@@ -1524,10 +1525,29 @@ const VOX = 0.03;
 let vox = new Map();          // "i,j,k" → { n, x, y, z, t }
 let panels = [];              // { obj, c: Vector3, e: Vector3, w, h, t }
 let capAt = 0;
+let learn = { on: !settings.screens, since: 0, ref: null };   // learning your screens, or holding the saved ones
 function resetPanels() { for (const p of panels) disposeObj(p.obj); panels = []; vox = new Map(); }
+function relearnScreens() { resetPanels(); settings.screens = null; saveSettings(); learn = { on: true, since: clock.t, ref: null }; }
+// Saved against the desk (which the Quest keeps in the same place every session), not the headset's start pose.
+function saveScreens() {
+  const dg = deskGeom(); if (!dg) return;
+  settings.screens = panels.map(p => { const q = p.c.clone().sub(dg.center);
+    return { e: +q.dot(dg.e).toFixed(3), y: +(p.c.y - dg.top).toFixed(3), u: +q.dot(dg.u).toFixed(3), ae: +p.e.dot(dg.e).toFixed(3), au: +p.e.dot(dg.u).toFixed(3), w: +p.w.toFixed(3), h: +p.h.toFixed(3) }; });
+  saveSettings(); console.info('[ufo] screens learned and saved', JSON.stringify(settings.screens));
+}
+function restoreScreens() {
+  const dg = deskGeom(); if (!dg || !settings.screens || panels.length) return false;
+  for (const s of settings.screens) {
+    const c = dg.center.clone().addScaledVector(dg.e, s.e).addScaledVector(dg.u, s.u); c.y = dg.top + s.y;
+    const e = dg.e.clone().multiplyScalar(s.ae).addScaledVector(dg.u, s.au).normalize();
+    const p = { c, e, w: s.w, h: s.h, obj: makeSkinObj(s.w, s.h, 'screen'), t: clock.t }; placePanel(p); panels.push(p);
+  }
+  console.info('[ufo] screens restored from last time:', panels.length); return true;
+}
 function capturePanels() {
+  if (!learn.on) { if (restoreScreens()) menuRedocked = false; return; }   // saved: just hold them, no refitting
   if (!depthOK || clock.t < capAt) return;
-  capAt = clock.t + 0.5;
+  capAt = clock.t + 0.25;
   const xrOn = renderer.xr.enabled; renderer.xr.enabled = false;
   const prev = renderer.getRenderTarget();
   renderer.setRenderTarget(capRT); renderer.render(capScene, capCam);
@@ -1572,6 +1592,14 @@ function fitPanels() {
       if (Math.abs(w - p.w) > 0.01 || Math.abs(h - p.h) > 0.01) { disposeObj(p.obj); p.obj = makeSkinObj(w, h, 'screen'); p.w = w; p.h = h; }
       placePanel(p);
     } else { const q = { ...f, obj: makeSkinObj(f.w, f.h, 'screen'), t: clock.t }; placePanel(q); panels.push(q); }
+  }
+  panels = panels.filter(p => clock.t - p.t < 3 || (disposeObj(p.obj), false));   // gone from view for 3 s: not a screen
+  // once the same screens have held still (within 3 cm) for 4 s, that's your desk: save it and stop refitting
+  const r = learn.ref, moved = !r || r.length !== panels.length || panels.some((p, i) => p.c.distanceTo(r[i].c) > 0.03 || Math.abs(p.w - r[i].w) > 0.03 || Math.abs(p.h - r[i].h) > 0.03);
+  if (moved) { learn.ref = panels.map(p => ({ c: p.c.clone(), w: p.w, h: p.h })); learn.since = clock.t; }
+  else if (panels.length && clock.t - learn.since > 4) {
+    learn.on = false; saveScreens(); menuRedocked = false; drawMenu();
+    setStatus(`Learned ${panels.length} screen${panels.length > 1 ? 's' : ''} and saved them. "Relearn my screens" if you move them.`);
   }
 }
 function placePanel(p) {
@@ -1629,6 +1657,14 @@ function sideSpot(rise) {
   const d = desk || scanDesk, dg = deskGeom(); if (!d || !dg) return null;
   const { head } = headPose();
   const fwd = new THREE.Vector3(-Math.sin(d.theta), 0, -Math.cos(d.theta)), left = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), fwd);
+  if (panels.length) {    // just left of your leftmost screen, in line with it
+    let best = null;
+    for (const p of panels) for (const sgn of [-1, 1]) {
+      const end = p.c.clone().addScaledVector(p.e, sgn * p.w / 2), l = end.clone().sub(head).setY(0).dot(left);
+      if (!best || l > best.l) best = { l, end, out: p.e.clone().multiplyScalar(sgn) };
+    }
+    const p = best.end.addScaledVector(best.out, 0.24); p.y = dg.top + rise; return p;
+  }
   let edge = -Infinity;    // the leftmost thing standing on the desk (your left speaker), else the desk's left end
   for (const [, v] of vox) if (v.n >= 3) edge = Math.max(edge, new THREE.Vector3(v.x / v.n - head.x, 0, v.z / v.n - head.z).dot(left));
   if (edge === -Infinity) for (const [p] of dg.edges) edge = Math.max(edge, new THREE.Vector3(p.x - head.x, 0, p.z - head.z).dot(left) - 0.15);
@@ -1652,7 +1688,7 @@ function btnLabel(id) {
   return {
     videoMode: 'Video: ' + settings.videoMode, play: videoLoaded ? (video.paused ? 'Play video' : 'Pause video') : (demoPaused ? 'Play demo clip' : 'Pause demo clip'), rotate: 'Rotate ship ↻ 15°', demo: 'Demo clip',
     gear: gearMode ? 'Framing…' : '🖥 Frame by hand',
-    auto: autoScan ? 'Looking…' : '✨ Find my gear',
+    auto: autoScan || learn.on ? 'Learning screens…' : '✨ Relearn my screens',
     desk: calib ? 'Setting desk…' : settings.desk ? 'Set my desk again' : '⚑ Set my desk', scan: 'Quest room scan: ' + (settings.useScan ? 'on' : 'off'),
     mark: markMode ? 'Marking… (pinch at it)' : 'Mark real zone', size: 'Zone size: ' + Math.round(settings.zoneSize * 100) + ' cm',
     clear: 'Clear real zones & frames', floor: 'Real floor: ' + (settings.realFloor ? 'on' : 'off'),
@@ -1763,7 +1799,7 @@ function doAction(id) {
     case 'outline': settings.outline = !settings.outline; break;
     case 'desk': startCalib(); break;
     case 'gear': gearMode ? endGear() : startGear(); break;
-    case 'auto': resetPanels(); menuRedocked = false; if (renderer.xr.getSession()?.enabledFeatures?.includes('mesh-detection')) { meshCheckAt = 0; if (meshGear) meshGear.key = null; setStatus('Re-moulding to your room mesh…'); } else startAutoScan(); break;
+    case 'auto': relearnScreens(); menuRedocked = false; if (renderer.xr.getSession()?.enabledFeatures?.includes('mesh-detection')) { meshCheckAt = 0; if (meshGear) meshGear.key = null; setStatus('Re-moulding to your room mesh…'); } else startAutoScan(); break;
     case 'scan': settings.useScan = !settings.useScan; if (!settings.useScan) clearPlanes(); break;
     case 'rescan': {
       const s = renderer.xr.getSession();
@@ -1892,7 +1928,7 @@ function frameFn(now, frame) {
     });
     if (changed) drawMenu();
     if (!menuDocked && (desk || scanDesk)) recallMenu();   // move it to the side console once the desk is known
-    if (!menuRedocked && panels.length && t > 6) { menuRedocked = true; recallMenu(); placeClaude(); }   // and again once the gear is found
+    if (!menuRedocked && panels.length && !learn.on && t > 2) { menuRedocked = true; recallMenu(); placeClaude(); }   // and again once the gear is found
   } else controls.update();
 }
 
