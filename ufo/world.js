@@ -49,6 +49,8 @@ const realRoot = new THREE.Group(); scene.add(realRoot);
 
 // A mask draws nothing but writes depth, so anything virtual behind it is hidden and passthrough shows.
 const maskMat = new THREE.MeshBasicMaterial({ colorWrite: false });
+const skinMat = new THREE.MeshBasicMaterial({ color: 0x050607 });   // the black skin; restyle it here
+const skinEdge = new THREE.LineBasicMaterial({ color: 0x232b33 });
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.45, depthTest: false });
 const R_MASK = -100, R_SKY = -50, R_OVERLAY = 900, R_UI = 1000;
 
@@ -1164,8 +1166,6 @@ const pendingGear = [];
 // Looks through the headset's camera for a few seconds while you glance over the desk, places each thing in the room,
 // then wraps it in a plain black "skin": a moulded housing with the real thing showing through a tight hole. The skin
 // is one material, so it can be restyled later without touching the detection.
-const skinMat = new THREE.MeshBasicMaterial({ color: 0x050607 });
-const skinEdge = new THREE.LineBasicMaterial({ color: 0x232b33 });
 const SKIN = {   // per kind: rim width, housing depth, how far the lip stands proud of the face, hole depth below the face
   screen: { rim: 0.03, depth: 0.06, lip: 0.012, below: 0.15, margin: 0.008 },
   keyboard: { rim: 0.025, depth: 0.035, lip: 0.03, below: 0.06, margin: 0.015 },
@@ -1383,7 +1383,7 @@ const depthMat = new THREE.ShaderMaterial({
   uniforms: {
     uDepth: { value: depthTex }, uLayer: { value: 0 }, uOn: { value: 0 },
     uDepthVP: { value: [new THREE.Matrix4(), new THREE.Matrix4()] }, uDepthInvVP: { value: [new THREE.Matrix4(), new THREE.Matrix4()] },
-    uRaw: { value: 1 },
+    uRaw: { value: 1 }, uNearD: { value: 0.1 }, uNearP: { value: 0.01 },
     uCenter: { value: new THREE.Vector3() }, uE: { value: new THREE.Vector3(1, 0, 0) }, uU: { value: new THREE.Vector3(0, 0, 1) },
     uBounds: { value: new THREE.Vector4() },   // eMin, eMax, uBack, uFront (desk axes, metres)
     uTop: { value: 0 }, uWalls: { value: Array.from({ length: MAX_WALLS }, () => new THREE.Vector4(0, 0, 0, 1e9)) },
@@ -1393,7 +1393,7 @@ const depthMat = new THREE.ShaderMaterial({
     void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
   fragmentShader: /* glsl */`
     precision highp float; precision highp sampler2DArray;
-    uniform sampler2DArray uDepth; uniform int uLayer; uniform float uOn, uRaw, uTop;
+    uniform sampler2DArray uDepth; uniform int uLayer; uniform float uOn, uRaw, uTop, uNearD, uNearP;
     uniform mat4 uDepthVP[2], uDepthInvVP[2];
     uniform vec3 uCenter, uE, uU; uniform vec4 uBounds; uniform vec4 uWalls[${MAX_WALLS}];
     uniform mat4 projectionMatrix;
@@ -1407,7 +1407,10 @@ const depthMat = new THREE.ShaderMaterial({
       if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) discard;
       float d = texture(uDepth, vec3(uv, float(uLayer))).r * uRaw;
       if (d <= 0.0 || d >= 1.0) discard;
-      vec4 p4 = IVP * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); vec3 P = p4.xyz / p4.w;   // the real surface here
+      // The Quest stores depth like a camera with its own near plane (10 cm) and no far plane: distance = near / (1 - d).
+      // Re-express that distance for the projection we unproject with (whose near plane is different).
+      float dist = uNearD / (1.0 - d);
+      vec4 p4 = IVP * vec4(uv * 2.0 - 1.0, 1.0 - 2.0 * uNearP / dist, 1.0); vec3 P = p4.xyz / p4.w;   // the real surface here
       if (P.y < uTop + 0.025 || P.y > uTop + 0.8) discard;
       vec3 q = P - uCenter; float e = dot(q, uE), u = dot(q, uU);
       if (e < uBounds.x || e > uBounds.y || u < uBounds.z || u > uBounds.w) discard;
@@ -1438,6 +1441,7 @@ function updateDepth(frame, ref) {
     if (!info) return;
     depthInfo[i] = info;
     const P = new THREE.Matrix4().fromArray(info.projectionMatrix || pose.views[i].projectionMatrix);
+    if (i === 0) { depthMat.uniforms.uNearD.value = info.depthNear || 0.1; depthMat.uniforms.uNearP.value = -P.elements[14] / 2; }
     const V = new THREE.Matrix4().fromArray((info.transform || pose.views[i].transform).inverse.matrix);
     depthMat.uniforms.uDepthVP.value[i].multiplyMatrices(P, V);
     depthMat.uniforms.uDepthInvVP.value[i].copy(depthMat.uniforms.uDepthVP.value[i]).invert();
