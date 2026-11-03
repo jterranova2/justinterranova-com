@@ -688,7 +688,7 @@ function buildPlaneObject(label, orientation, polygon, matrix) {
   else if (orientation === 'horizontal') {
     // Keep the whole thing real from the floor up to just above its top, so legs, chair and keyboard stay visible
     // without opening a big hole into your real wall behind the desk.
-    const top = matrix.elements[13]; depth = top + 0.04; offset = -top;
+    const top = matrix.elements[13] - floorLevel(); depth = top + 0.04; offset = -top;   // height above the real floor
   } else { depth = 0.3; offset = -0.15; }    // vertical things (door, monitor): a thin slab
   const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
   geo.rotateX(-Math.PI / 2); geo.translate(0, offset, 0);
@@ -704,6 +704,9 @@ function buildPlaneObject(label, orientation, polygon, matrix) {
   if (!far) g.add(mesh);
   return g;
 }
+// Where the real floor is, in headset coordinates. With 'local' tracking, 0 is your head height when you boarded,
+// so until the room scan reports the floor, assume you're seated (floor ~1.2 m below).
+function floorLevel() { return state.floorLevel ?? (renderer.xr.isPresenting ? -1.2 : 0); }
 function disposeObj(o) { o.traverse(c => c.geometry?.dispose()); o.removeFromParent(); }
 function applyVisibility() {
   scene.traverse(o => {
@@ -985,10 +988,14 @@ function updateDesk(frame, ref) {
     const a = r.obj.userData.polygon.length;   // rough size proxy; there is normally just one floor
     if (a > floorArea) { floorArea = a; floorY = r.obj.matrix.elements[13]; }
   }
-  if (floorY !== null && Math.abs(cabinRoot.position.y - floorY) > 0.005) {
-    if (Math.abs(cabinRoot.position.y - floorY) > 0.05) console.info('[ufo] floor moved; ship now stands at', +floorY.toFixed(3));
-    cabinRoot.position.y = floorY;
+  if (floorY !== null && Math.abs(floorLevel() - floorY) > 0.03) {
+    console.info('[ufo] floor found at', +floorY.toFixed(3), '(was', +floorLevel().toFixed(3) + ')');
+    state.floorLevel = floorY;
+    for (const [, r] of planeObjs) r.t = null;          // rebuild desk/shelf volumes from the real floor up
+    if (desk) buildDesk(desk.matrix, settings.desk);
   }
+  const fl = floorLevel();
+  if (Math.abs(cabinRoot.position.y - fl) > 0.005) cabinRoot.position.y = fl;   // the ship stands on the real floor
   // orange dot on each fingertip / controller tip while setting the desk
   controllers.forEach((c, i) => {
     cursors[i].visible = !!((calib || monitorMode) && c.userData.src);
@@ -1171,7 +1178,7 @@ enterBtn.addEventListener('click', async () => {
   ensureAudio();
   try {
     const session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['local-floor'],
+      requiredFeatures: [],   // no 'local-floor': see index.html
       optionalFeatures: ['plane-detection', 'anchors', 'hand-tracking'],
     });
     await renderer.xr.setSession(session);
@@ -1179,6 +1186,8 @@ enterBtn.addEventListener('click', async () => {
   } catch (e) { setStatus('Could not start: ' + e.message); }
 }, { signal });
 function onSessionStart(session, resumed) {
+  if (!resumed) state.floorLevel = null;   // a fresh session has a fresh origin
+  cabinRoot.position.y = floorLevel();
   fakeRoom.visible = false; menu.visible = true; controls.enabled = false;
   if (resumed && state.menuPose) { menu.position.copy(state.menuPose.p); menu.quaternion.copy(state.menuPose.q); }
   else firstXRFrame = true;
@@ -1188,7 +1197,7 @@ function onSessionStart(session, resumed) {
   session.addEventListener('end', () => {
     fakeRoom.visible = true; menu.visible = false; controls.enabled = true;
     for (const z of zones) disposeObj(z.obj); zones = [];
-    disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = null; tip.visible = false; cabinRoot.position.y = 0; calibMarkers.clear(); applyVisibility();
+    disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = null; tip.visible = false; state.floorLevel = null; cabinRoot.position.y = 0; calibMarkers.clear(); applyVisibility();
     for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear();
     state.anchors = {}; state.menuPose = null;
   }, { signal });
