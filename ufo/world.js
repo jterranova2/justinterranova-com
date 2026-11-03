@@ -665,8 +665,14 @@ function setSceneAudio(key) {
 // ───────────────────────── real-world masks: planes from Space Setup ─────────────────────────
 // Space Setup labels: wall, floor, ceiling, table, couch, door, window, screen, storage, bed, lamp, plant, other…
 const REPLACED = new Set(['wall', 'ceiling', 'window', 'wall_art', 'wall art']);  // these become the ship
+const FLIP = new THREE.Matrix4().makeRotationX(Math.PI);
 function buildPlaneObject(label, orientation, polygon, matrix) {
+  // The Quest reports desks, floors and shelves with their local +Y pointing down. Turn those upright first
+  // (and mirror the outline to match), otherwise "from the floor up to the desk top" goes upward from the desk.
+  const flip = orientation === 'horizontal' && matrix.elements[5] < 0;
+  if (flip) { matrix = matrix.clone().multiply(FLIP); polygon = polygon.map(p => ({ x: p.x, y: 0, z: -p.z })); }
   const g = new THREE.Group(); g.matrixAutoUpdate = false; g.matrix.copy(matrix); g.matrixWorldNeedsUpdate = true;
+  g.userData.flip = flip; g.userData.polygon = polygon;
   const lbl = (label || 'other').toLowerCase(); g.userData.label = lbl;
   if (REPLACED.has(lbl)) {
     if (lbl === 'wall') {       // faint outline of your real walls so you never walk into one
@@ -699,8 +705,9 @@ function applyVisibility() {
     if (o.userData.kind === 'outline') o.visible = settings.outline;
     if (o.userData.kind === 'floor') o.visible = settings.realFloor;
   });
-  cabinRoot.rotation.y = (desk ? desk.theta : 0) + THREE.MathUtils.degToRad(settings.yaw);
-  if (desk) cabinRoot.position.set(desk.seat.x, 0, desk.seat.z); else cabinRoot.position.set(0, 0, 0);   // centred on your chair
+  const d = desk || scanDesk;   // a desk you set by touch wins over the Quest's scan
+  cabinRoot.rotation.y = (d ? d.theta : 0) + THREE.MathUtils.degToRad(settings.yaw);
+  if (d) cabinRoot.position.set(d.seat.x, 0, d.seat.z); else cabinRoot.position.set(0, 0, 0);   // centred on your chair
 }
 
 const planeObjs = new Map();
@@ -717,7 +724,9 @@ function syncPlanes(frame, ref) {
       realRoot.add(obj); rec = { obj, t: plane.lastChangedTime }; planeObjs.set(plane, rec);
       applyVisibility();
     }
-    rec.obj.matrix.fromArray(pose.transform.matrix); rec.obj.matrixWorldNeedsUpdate = true;
+    rec.obj.matrix.fromArray(pose.transform.matrix); if (rec.obj.userData.flip) rec.obj.matrix.multiply(FLIP);
+    rec.obj.matrixWorldNeedsUpdate = true;
+    if (rec.obj.userData.label === 'table' && !rec.aligned) { rec.aligned = true; deskFromScan(rec.obj); }
   });
   for (const [plane, rec] of planeObjs) if (!seen.has(plane)) { disposeObj(rec.obj); planeObjs.delete(plane); }
 }
@@ -837,15 +846,31 @@ const tipC = document.createElement('canvas'); tipC.width = 1024; tipC.height = 
 const tipTex = new THREE.CanvasTexture(tipC); tipTex.colorSpace = THREE.SRGBColorSpace;
 const tip = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5 * 230 / 1024), new THREE.MeshBasicMaterial({ map: tipTex, transparent: true, depthTest: false, toneMapped: false }));
 tip.renderOrder = R_UI; tip.visible = false; scene.add(tip);
-function showTip(title, sub) {
+let monitorMode = null;   // { until }: after the desk is set, pinches add monitors until you press Done
+function hitTip() { return tip.visible && raycaster.intersectObject(tip).length > 0; }   // uses the ray pointAt() just set
+function addMonitor(p) {
+  const local = p.clone().applyMatrix4(desk.matrix.clone().invert());
+  settings.desk.monitors.push(local.toArray().map(v => +v.toFixed(3)));
+  buildDesk(desk.matrix, settings.desk); saveSettings();
+  monitorMode.until = clock.t + 25;
+  const n = settings.desk.monitors.length;
+  showTip(`${n} monitor${n > 1 ? 's' : ''} kept real ✓`, 'Touch another monitor and pinch, or point at this sign and pinch to finish.', true);
+}
+function endMonitors() { monitorMode = null; tip.visible = false; setStatus('All set ✓'); }
+function showTip(title, sub, done = false) {
   const x = tipX; x.clearRect(0, 0, 1024, 230);
   x.fillStyle = 'rgba(12,16,26,0.9)'; x.beginPath(); x.roundRect(0, 0, 1024, 230, 30); x.fill();
   x.strokeStyle = '#ffa040'; x.lineWidth = 4; x.beginPath(); x.roundRect(2, 2, 1020, 226, 28); x.stroke();
   x.fillStyle = '#ffd2a8'; x.font = '600 46px system-ui'; x.fillText(title, 40, 74);
   x.fillStyle = '#e8f1ff'; x.font = '32px system-ui';
   let line = '', y = 132;
-  for (const w of sub.split(' ')) { const t = line ? line + ' ' + w : w; if (x.measureText(t).width > 944) { x.fillText(line, 40, y); y += 42; line = w; } else line = t; }
+  for (const w of sub.split(' ')) { const t = line ? line + ' ' + w : w; if (x.measureText(t).width > (done ? 740 : 944)) { x.fillText(line, 40, y); y += 42; line = w; } else line = t; }
   x.fillText(line, 40, y);
+  if (done) {
+    x.fillStyle = '#1a6b55'; x.beginPath(); x.roundRect(800, 120, 196, 86, 20); x.fill();
+    x.strokeStyle = '#38c79c'; x.lineWidth = 3; x.beginPath(); x.roundRect(800, 120, 196, 86, 20); x.stroke();
+    x.fillStyle = '#fff'; x.font = '600 38px system-ui'; x.textAlign = 'center'; x.fillText('Done ✓', 898, 176); x.textAlign = 'left';
+  }
   tipTex.needsUpdate = true; tip.visible = true;
 }
 function headPose() {
@@ -868,8 +893,7 @@ function calibPoint(p) {
   const m = new THREE.Mesh(new THREE.SphereGeometry(0.016, 12, 8), cursorMat); m.position.copy(p); m.renderOrder = R_UI; calibMarkers.add(m);
   if (calib.step < 2) calib.pts.push(p.clone()); else calib.monitors.push(p.clone());
   if (calib.step === 0) { calib.step = 1; showTip('Set your desk  (2 of 3)', 'Now the FRONT-RIGHT corner of your desk.'); }
-  else if (calib.step === 1) { calib.step = 2; showTip('Your monitors  (3 of 3)', 'Pinch at the top-middle of each monitor. When you’re done, pinch the menu on your right.'); }
-  else showTip('Your monitors  (3 of 3)', `${calib.monitors.length} monitor${calib.monitors.length > 1 ? 's' : ''} marked. Pinch another, or pinch the menu to finish.`);
+  else if (calib.step === 1) { calib.step = 2; finishQueued = true; }   // two corners is all the desk needs
 }
 function deskFrame(L, R, head) {
   const mid = L.clone().add(R).multiplyScalar(0.5);
@@ -896,7 +920,7 @@ function buildDesk(matrix, rec) {
 }
 function restoreDesk(session) {
   const rec = settings.desk;
-  if (!rec) { setTimeout(() => { if (!desk && !calib && renderer.xr.isPresenting) startCalib(); }, 1200); return; }
+  if (!rec) { setTimeout(() => { if (!desk && !scanDesk && !calib && renderer.xr.isPresenting) startCalib(); }, 4000); return; }
   deskWaitUntil = clock.t + 6;
   const cached = rec.uuid && state.anchors?.[rec.uuid];
   if (cached) { deskAnchor = cached; return; }
@@ -923,8 +947,10 @@ function finishCalib(frame, ref) {
   buildDesk(matrix, rec);
   settings.desk = rec; settings.yaw = 0; settings.useScan = false; clearPlanes();
   saveSettings(); applyVisibility(); refreshUI();
-  calib = null; tip.visible = false; calibMarkers.clear();
+  calib = null; calibMarkers.clear();
   setStatus('Desk set ✓ The ship is now built around it');
+  monitorMode = { until: clock.t + 25 }; placeTip();
+  showTip('Desk set ✓   Monitors (optional)', 'Touch the top of each monitor and pinch. Point at this sign and pinch when you’re done.', true);
   const session = renderer.xr.getSession();
   if (old?.uuid && session?.deletePersistentAnchor) session.deletePersistentAnchor(old.uuid).catch(() => {});
   if (!frame.createAnchor) return;
@@ -946,13 +972,34 @@ function updateDesk(frame, ref) {
     }
   } else if (deskAnchor && !desk && deskWaitUntil && clock.t > deskWaitUntil) { deskWaitUntil = 0; deskLost(); }
   if (finishQueued && calib) { finishQueued = false; finishCalib(frame, ref); }
+  if (monitorMode && clock.t > monitorMode.until) endMonitors();
   // orange dot on each fingertip / controller tip while setting the desk
   controllers.forEach((c, i) => {
-    cursors[i].visible = !!(calib && c.userData.src);
+    cursors[i].visible = !!((calib || monitorMode) && c.userData.src);
     if (cursors[i].visible) cursors[i].position.setFromMatrixPosition(c.matrixWorld);
   });
 }
-function clearPlanes() { for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear(); }
+function clearPlanes() { for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear(); scanDesk = null; applyVisibility(); }
+// From a scanned table: its edge nearest you is the front edge.
+let scanDesk = null;
+function deskFromScan(obj) {
+  if (!renderer.xr.isPresenting) return;
+  const { head } = headPose();
+  const pts = obj.userData.polygon.map(p => new THREE.Vector3(p.x, 0, p.z).applyMatrix4(obj.matrix));
+  let best = null;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    if (a.distanceTo(b) < 0.3) continue;
+    const dist = Math.hypot((a.x + b.x) / 2 - head.x, (a.z + b.z) / 2 - head.z);
+    if (!best || dist < best.dist) best = { a, b, dist };
+  }
+  if (!best) return;
+  const { matrix } = deskFrame(best.a, best.b, head);
+  const e = matrix.elements;
+  scanDesk = { theta: Math.atan2(e[8], e[10]), seat: new THREE.Vector3(0, 0, SEAT_BACK).applyMatrix4(matrix) };
+  applyVisibility();
+  console.info('[ufo] ship lined up with the scanned desk', { yawDeg: +(scanDesk.theta * 180 / Math.PI).toFixed(1), seat: scanDesk.seat.toArray().map(v => +v.toFixed(2)) });
+}
 
 // ───────────────────────── in-headset menu ─────────────────────────
 const MW = 1024, MH = 744;
@@ -1031,10 +1078,11 @@ function pointAt(c) {
 function onSelect(i) {
   if (window.__xrBridge?.consumes?.(i)) return;   // the press was on the Claude panel
   const c = controllers[i]; const { id } = pointAt(c);
-  if (calib) {   // setting the desk: a touch in the room records a point; the menu finishes once the desk is in
-    if (!id) { calibPoint(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld)); return; }
-    if (calib.step === 2) { finishQueued = true; return; }
+  if (monitorMode) {
+    if (hitTip()) { endMonitors(); return; }
+    if (!id && desk) { addMonitor(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld)); return; }
   }
+  if (calib && !id) { if (calib.step < 2) calibPoint(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld)); return; }
   if (id && id !== 'panel') { doAction(id); return; }
   if (markMode && !id) {
     pendingZones.push(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld));
@@ -1124,7 +1172,7 @@ function onSessionStart(session, resumed) {
   session.addEventListener('end', () => {
     fakeRoom.visible = true; menu.visible = false; controls.enabled = true;
     for (const z of zones) disposeObj(z.obj); zones = [];
-    disposeDesk(); deskAnchor = null; calib = null; tip.visible = false; calibMarkers.clear(); applyVisibility();
+    disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = null; tip.visible = false; calibMarkers.clear(); applyVisibility();
     for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear();
     state.anchors = {}; state.menuPose = null;
   }, { signal });
@@ -1200,7 +1248,8 @@ function describe() {
     detectedPlanes: [...planeObjs.values()].map(r => r.obj.userData.label),
     markMode, menuVisible: menu.visible, status: statusText,
     desk: desk ? { center: new THREE.Vector3().setFromMatrixPosition(desk.matrix).toArray().map(v => +v.toFixed(3)), yawDeg: +(desk.theta * 180 / Math.PI).toFixed(1), widthM: +settings.desk.width.toFixed(2), monitors: settings.desk.monitors.length, anchored: !!deskAnchor } : (settings.desk ? 'saved but not found yet' : 'not set'),
-    settingDesk: calib ? ['front-left corner', 'front-right corner', 'monitors'][calib.step] : null, useQuestScan: settings.useScan,
+    settingDesk: calib ? ['front-left corner', 'front-right corner', 'saving'][calib.step] : monitorMode ? 'monitors (optional)' : null, useQuestScan: settings.useScan,
+    scanDesk: scanDesk ? { yawDeg: +(scanDesk.theta * 180 / Math.PI).toFixed(1), seat: scanDesk.seat.toArray().map(v => +v.toFixed(2)) } : null,
   };
 }
 
@@ -1209,4 +1258,4 @@ showScene(settings.scene);
 SHELL.scene.add(scene);
 if (renderer.xr.isPresenting) onSessionStart(renderer.xr.getSession(), true);
 if (actx && actx.state === 'running') ensureAudio();
-SHELL.world = { frame: frameFn, dispose, describe, debug: { deskFrame, buildDesk, disposeDesk, applyVisibility } };
+SHELL.world = { frame: frameFn, dispose, describe, debug: { deskFrame, buildDesk, disposeDesk, applyVisibility, buildPlaneObject } };
