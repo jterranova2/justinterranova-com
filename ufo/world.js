@@ -90,7 +90,7 @@ function glowTexture(inner = 'rgba(255,255,255,1)') {
 const GLOW = glowTexture();
 
 // ───────────────────────── the UFO cabin ─────────────────────────
-const HULL_R = 2.5, WIN_BOTTOM = 0.85, WIN_TOP = 2.3, ROOF = 2.55;
+const HULL_R = 2.5, WIN_BOTTOM = 1.45, WIN_TOP = 2.6, ROOF = 2.85;   // window starts above your monitors (seen from a seated head)
 const WIN_HALF = THREE.MathUtils.degToRad(78);  // window spans ±78° around straight ahead (-Z)
 // CylinderGeometry measures theta from +Z, so straight ahead (-Z) is theta = π.
 
@@ -1383,7 +1383,7 @@ const depthMat = new THREE.ShaderMaterial({
   uniforms: {
     uDepth: { value: depthTex }, uLayer: { value: 0 }, uOn: { value: 0 },
     uDepthVP: { value: [new THREE.Matrix4(), new THREE.Matrix4()] }, uDepthInvVP: { value: [new THREE.Matrix4(), new THREE.Matrix4()] },
-    uRaw: { value: 1 }, uNearD: { value: 0.1 }, uNearP: { value: 0.01 },
+    uRaw: { value: 1 }, uNearD: { value: 0.1 }, uNearP: { value: 0.01 }, uDebug: { value: 0 },
     uCenter: { value: new THREE.Vector3() }, uE: { value: new THREE.Vector3(1, 0, 0) }, uU: { value: new THREE.Vector3(0, 0, 1) },
     uBounds: { value: new THREE.Vector4() },   // eMin, eMax, uBack, uFront (desk axes, metres)
     uTop: { value: 0 }, uWalls: { value: Array.from({ length: MAX_WALLS }, () => new THREE.Vector4(0, 0, 0, 1e9)) },
@@ -1393,34 +1393,51 @@ const depthMat = new THREE.ShaderMaterial({
     void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
   fragmentShader: /* glsl */`
     precision highp float; precision highp sampler2DArray;
-    uniform sampler2DArray uDepth; uniform int uLayer; uniform float uOn, uRaw, uTop, uNearD, uNearP;
+    layout(location = 0) out vec4 outColor;
+    uniform sampler2DArray uDepth; uniform int uLayer; uniform float uOn, uRaw, uTop, uNearD, uNearP, uDebug;
     uniform mat4 uDepthVP[2], uDepthInvVP[2];
     uniform vec3 uCenter, uE, uU; uniform vec4 uBounds; uniform vec4 uWalls[${MAX_WALLS}];
     uniform mat4 projectionMatrix;
-    layout(location = 0) out vec4 outColor;
     varying vec3 vW;
+    // Is the real surface seen at this depth-map spot standing on the desk? (and where is it)
+    bool keepAt(vec2 uv, mat4 IVP, out vec3 P) {
+      if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return false;
+      float d = texture(uDepth, vec3(uv, float(uLayer))).r * uRaw;
+      if (d <= 0.0 || d >= 1.0) return false;
+      // The Quest stores depth like a camera with its own near plane (10 cm) and no far plane: distance = near / (1 - d).
+      // Re-express that distance for the projection we unproject with (whose near plane is different).
+      float dist = uNearD / (1.0 - d);
+      vec4 p4 = IVP * vec4(uv * 2.0 - 1.0, 1.0 - 2.0 * uNearP / dist, 1.0); P = p4.xyz / p4.w;
+      if (P.y < uTop + 0.025 || P.y > uTop + 0.8) return false;
+      vec3 q = P - uCenter; float e = dot(q, uE), u = dot(q, uU);
+      if (e < uBounds.x || e > uBounds.y || u < uBounds.z || u > uBounds.w) return false;
+      for (int i = 0; i < ${MAX_WALLS}; i++) if (abs(dot(uWalls[i].xyz, P) + uWalls[i].w) < 0.07) return false;
+      return true;
+    }
     void main() {
       if (uOn < 0.5) discard;
       mat4 VP = uLayer == 0 ? uDepthVP[0] : uDepthVP[1];
       mat4 IVP = uLayer == 0 ? uDepthInvVP[0] : uDepthInvVP[1];
       vec4 c = VP * vec4(vW, 1.0); vec2 uv = (c.xy / c.w) * 0.5 + 0.5;
-      if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) discard;
-      float d = texture(uDepth, vec3(uv, float(uLayer))).r * uRaw;
-      if (d <= 0.0 || d >= 1.0) discard;
-      // The Quest stores depth like a camera with its own near plane (10 cm) and no far plane: distance = near / (1 - d).
-      // Re-express that distance for the projection we unproject with (whose near plane is different).
-      float dist = uNearD / (1.0 - d);
-      vec4 p4 = IVP * vec4(uv * 2.0 - 1.0, 1.0 - 2.0 * uNearP / dist, 1.0); vec3 P = p4.xyz / p4.w;   // the real surface here
-      if (P.y < uTop + 0.025 || P.y > uTop + 0.8) discard;
-      vec3 q = P - uCenter; float e = dot(q, uE), u = dot(q, uU);
-      if (e < uBounds.x || e > uBounds.y || u < uBounds.z || u > uBounds.w) discard;
-      for (int i = 0; i < ${MAX_WALLS}; i++) if (abs(dot(uWalls[i].xyz, P) + uWalls[i].w) < 0.07) discard;
-      vec4 s = projectionMatrix * viewMatrix * vec4(P, 1.0);
+      // The sensor is noisy pixel to pixel, so vote over a small neighbourhood: kept if enough neighbours agree.
+      // That fills pinholes and steadies the edges; the nearest kept surface sets the depth.
+      vec2 px = vec2(1.6 / 320.0);
+      int votes = 0; vec3 best = vec3(0.0); float bestD = 1e9; vec3 P;
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+        if (keepAt(uv + vec2(float(x), float(y)) * px, IVP, P)) {
+          votes++; float dd = dot(P - cameraPosition, P - cameraPosition);
+          if (dd < bestD) { bestD = dd; best = P; }
+        }
+      }
+      if (votes < 4) { if (uDebug > 0.5) { outColor = vec4(0.8, 0.1, 0.1, 0.4); gl_FragDepth = 0.0; return; } discard; }
+      vec4 s = projectionMatrix * viewMatrix * vec4(best, 1.0);
       gl_FragDepth = clamp(s.z / s.w * 0.5 + 0.5, 0.0, 1.0);   // the real thing's own depth, so it covers the ship
-      outColor = vec4(0.0);
+      outColor = uDebug > 0.5 ? vec4(0.1, 1.0, 0.2, 0.55) : vec4(0.0);
     }`,
-  side: THREE.BackSide, colorWrite: false, depthWrite: true, depthTest: false,
+  // depthTest must stay on: with it off, WebGL writes no depth at all. 'Always' lets every pixel through.
+  side: THREE.BackSide, colorWrite: false, depthWrite: true, depthTest: true, depthFunc: THREE.AlwaysDepth, transparent: false,
 });
+function depthDebug(on) { depthMat.uniforms.uDebug.value = on ? 1 : 0; depthMat.colorWrite = !!on; depthMat.transparent = !!on; depthShell.renderOrder = on ? R_UI - 1 : R_MASK - 1; depthMat.needsUpdate = true; }
 const depthShell = new THREE.Mesh(new THREE.SphereGeometry(1.6, 48, 24), depthMat);
 depthShell.renderOrder = R_MASK - 1; depthShell.frustumCulled = false; scene.add(depthShell);
 let depthOK = false, depthInfo = [null, null];
@@ -1513,12 +1530,17 @@ function drawMenu() {
 function recallMenu() {
   const cam = renderer.xr.getCamera();
   const head = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
-  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())); fwd.y = 0; fwd.normalize();
+  const d = desk || scanDesk;
+  // With a desk: pinned low on your right like a side console, facing the way you face the desk, so it never
+  // covers your monitors. Without one: in front of you, low and to the right.
+  const fwd = d ? new THREE.Vector3(-Math.sin(d.theta), 0, -Math.cos(d.theta))
+    : new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())).setY(0).normalize();
   const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0));
-  // Low and to the right, so it never covers the window or your monitor.
-  menu.position.copy(head).addScaledVector(fwd, 0.55).addScaledVector(right, 0.3); menu.position.y = head.y - 0.28;
-  menu.lookAt(head); menu.visible = true; menuUse = clock.t;
+  if (d) { menu.position.copy(head).addScaledVector(fwd, 0.25).addScaledVector(right, 0.6); menu.position.y = head.y - 0.4; menu.scale.setScalar(0.65); }
+  else { menu.position.copy(head).addScaledVector(fwd, 0.55).addScaledVector(right, 0.3); menu.position.y = head.y - 0.28; menu.scale.setScalar(1); }
+  menu.lookAt(head); menu.visible = true; menuUse = clock.t; menuDocked = !!d;
 }
+let menuDocked = false;
 
 // ───────────────────────── controllers / pointing ─────────────────────────
 const raycaster = new THREE.Raycaster();
@@ -1704,7 +1726,7 @@ function frameFn(now, frame) {
       if (hovered[i] !== h) { hovered[i] = h; changed = true; }
     });
     if (changed) drawMenu();
-    if (menu.visible && t - menuUse > 10 && !calib && !gearMode && !monitorMode && !markMode) menu.visible = false;
+    if (!menuDocked && (desk || scanDesk)) recallMenu();   // move it to the side console once the desk is known
   } else controls.update();
 }
 
@@ -1748,4 +1770,4 @@ showScene(settings.scene);
 SHELL.scene.add(scene);
 if (renderer.xr.isPresenting) onSessionStart(renderer.xr.getSession(), true);
 if (actx && actx.state === 'running') ensureAudio();
-SHELL.world = { frame: frameFn, dispose, describe, debug: { deskGeom, startAutoScan, get sense() { return sense; }, makeSkinObj, deskFrame, buildDesk, disposeDesk, applyVisibility, buildPlaneObject, startGear, gearFrame, makeGearObj } };
+SHELL.world = { frame: frameFn, dispose, describe, debug: { depthDebug, depthMat, deskGeom, startAutoScan, get sense() { return sense; }, makeSkinObj, deskFrame, buildDesk, disposeDesk, applyVisibility, buildPlaneObject, startGear, gearFrame, makeGearObj } };
