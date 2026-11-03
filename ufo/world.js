@@ -707,7 +707,7 @@ function applyVisibility() {
   });
   const d = desk || scanDesk;   // a desk you set by touch wins over the Quest's scan
   cabinRoot.rotation.y = (d ? d.theta : 0) + THREE.MathUtils.degToRad(settings.yaw);
-  if (d) cabinRoot.position.set(d.seat.x, 0, d.seat.z); else cabinRoot.position.set(0, 0, 0);   // centred on your chair
+  if (d) cabinRoot.position.set(d.seat.x, cabinRoot.position.y, d.seat.z); else cabinRoot.position.set(0, cabinRoot.position.y, 0);   // centred on your chair
 }
 
 const planeObjs = new Map();
@@ -920,7 +920,7 @@ function buildDesk(matrix, rec) {
 }
 function restoreDesk(session) {
   const rec = settings.desk;
-  if (!rec) { setTimeout(() => { if (!desk && !scanDesk && !calib && renderer.xr.isPresenting) startCalib(); }, 4000); return; }
+  if (!rec) { setTimeout(() => { if (!desk && !scanDesk && !calib && renderer.xr.isPresenting && ![...planeObjs.values()].some(r => r.obj.userData.label === 'table')) startCalib(); }, 4000); return; }
   deskWaitUntil = clock.t + 6;
   const cached = rec.uuid && state.anchors?.[rec.uuid];
   if (cached) { deskAnchor = cached; return; }
@@ -973,6 +973,17 @@ function updateDesk(frame, ref) {
   } else if (deskAnchor && !desk && deskWaitUntil && clock.t > deskWaitUntil) { deskWaitUntil = 0; deskLost(); }
   if (finishQueued && calib) { finishQueued = false; finishCalib(frame, ref); }
   if (monitorMode && clock.t > monitorMode.until) endMonitors();
+  // The Quest's own floor level can be wrong (it jumped 33 cm mid-session from a stale play area), so the ship
+  // stands on the scanned floor instead, and follows it if it moves.
+  let floorY = null, floorArea = 0;
+  for (const [, r] of planeObjs) if (r.obj.userData.label === 'floor') {
+    const a = r.obj.userData.polygon.length;   // rough size proxy; there is normally just one floor
+    if (a > floorArea) { floorArea = a; floorY = r.obj.matrix.elements[13]; }
+  }
+  if (floorY !== null && Math.abs(cabinRoot.position.y - floorY) > 0.005) {
+    if (Math.abs(cabinRoot.position.y - floorY) > 0.05) console.info('[ufo] floor moved; ship now stands at', +floorY.toFixed(3));
+    cabinRoot.position.y = floorY;
+  }
   // orange dot on each fingertip / controller tip while setting the desk
   controllers.forEach((c, i) => {
     cursors[i].visible = !!((calib || monitorMode) && c.userData.src);
@@ -984,21 +995,21 @@ function clearPlanes() { for (const [, rec] of planeObjs) disposeObj(rec.obj); p
 let scanDesk = null;
 function deskFromScan(obj) {
   if (!renderer.xr.isPresenting) return;
+  // Scanned desk outlines are often irregular (many short edges), so don't look for a straight front edge.
+  // Face the desk from where you are, snapped to the scan's own axes when they're close (they usually follow the desk).
   const { head } = headPose();
   const pts = obj.userData.polygon.map(p => new THREE.Vector3(p.x, 0, p.z).applyMatrix4(obj.matrix));
-  let best = null;
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i], b = pts[(i + 1) % pts.length];
-    if (a.distanceTo(b) < 0.3) continue;
-    const dist = Math.hypot((a.x + b.x) / 2 - head.x, (a.z + b.z) / 2 - head.z);
-    if (!best || dist < best.dist) best = { a, b, dist };
-  }
-  if (!best) return;
-  const { matrix } = deskFrame(best.a, best.b, head);
-  const e = matrix.elements;
-  scanDesk = { theta: Math.atan2(e[8], e[10]), seat: new THREE.Vector3(0, 0, SEAT_BACK).applyMatrix4(matrix) };
+  const center = pts.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
+  let u = new THREE.Vector3(head.x - center.x, 0, head.z - center.z).normalize();       // desk → you
+  const ax = new THREE.Vector3().setFromMatrixColumn(obj.matrix, 0).setY(0).normalize();
+  const az = new THREE.Vector3().setFromMatrixColumn(obj.matrix, 2).setY(0).normalize();
+  const best = [ax, ax.clone().negate(), az, az.clone().negate()].sort((a, b) => b.dot(u) - a.dot(u))[0];
+  if (best.dot(u) > Math.cos(THREE.MathUtils.degToRad(25))) u = best.clone();
+  const theta = Math.atan2(u.x, u.z);
+  const seat = new THREE.Vector3(head.x, 0, head.z);   // the ship is centred on where you're actually sitting
+  scanDesk = { theta, seat };
   applyVisibility();
-  console.info('[ufo] ship lined up with the scanned desk', { yawDeg: +(scanDesk.theta * 180 / Math.PI).toFixed(1), seat: scanDesk.seat.toArray().map(v => +v.toFixed(2)) });
+  console.info('[ufo] ship lined up with the scanned desk', { yawDeg: +(theta * 180 / Math.PI).toFixed(1), seat: seat.toArray().map(v => +v.toFixed(2)) });
 }
 
 // ───────────────────────── in-headset menu ─────────────────────────
@@ -1172,7 +1183,7 @@ function onSessionStart(session, resumed) {
   session.addEventListener('end', () => {
     fakeRoom.visible = true; menu.visible = false; controls.enabled = true;
     for (const z of zones) disposeObj(z.obj); zones = [];
-    disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = null; tip.visible = false; calibMarkers.clear(); applyVisibility();
+    disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = null; tip.visible = false; cabinRoot.position.y = 0; calibMarkers.clear(); applyVisibility();
     for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear();
     state.anchors = {}; state.menuPose = null;
   }, { signal });
