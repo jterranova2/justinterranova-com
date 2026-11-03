@@ -21,13 +21,13 @@ const settings = {
   scene: store.get('scene', 'festival'),
   videoMode: store.get('videoMode', 'flat'),   // flat | 360 | 180
   yaw: store.get('yaw', 0),
-  outline: store.get('outline', true),
+  outline: store.get('outlineAll', false),   // outlines of every wall and piece of furniture (off: walls appear only up close)
   realFloor: store.get('realFloor', false),
   zoneSize: store.get('zoneSize', 0.4),
   desk: store.get('desk', null),         // set by touching the desk corners
   useScan: store.get('useScan', true),    // also trust the Quest's own room scan?
 };
-const saveSettings = () => { for (const k in settings) store.set(k, settings[k]); };
+const saveSettings = () => { for (const k in settings) store.set(k === 'outline' ? 'outlineAll' : k, settings[k]); };
 
 const SCENES = [
   { key: 'festival', label: 'Festival flyover' },
@@ -987,6 +987,16 @@ function updateDesk(frame, ref) {
   } else if (deskAnchor && !desk && deskWaitUntil && clock.t > deskWaitUntil) { deskWaitUntil = 0; deskLost(); }
   if (finishQueued && calib) { finishQueued = false; finishCalib(frame, ref); }
   if (monitorMode && clock.t > monitorMode.until) endMonitors();
+  // Like the Quest's own boundary: a wall's outline shows only when you're within arm's reach of it.
+  if (!settings.outline) {
+    const head = headPose().head;
+    for (const [, r] of planeObjs) {
+      if (r.obj.userData.label !== 'wall') continue;
+      const e = r.obj.matrix.elements, n = new THREE.Vector3(e[4], e[5], e[6]).normalize();
+      const near = Math.abs(head.clone().sub(new THREE.Vector3(e[12], e[13], e[14])).dot(n)) < 0.7;
+      for (const c of r.obj.children) if (c.userData.kind === 'outline') c.visible = near;
+    }
+  }
   // The Quest's own floor level can be wrong (it jumped 33 cm mid-session from a stale play area), so the ship
   // stands on the scanned floor instead, and follows it if it moves.
   let floorY = null, floorArea = 0;
