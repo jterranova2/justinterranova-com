@@ -24,6 +24,7 @@ const settings = {
   outline: store.get('outlineAll', false),   // outlines of every wall and piece of furniture (off: walls appear only up close)
   realFloor: store.get('realFloor', false),
   zoneSize: store.get('zoneSize', 0.4),
+  gear: store.get('gear', []),            // monitors and speakers you framed
   desk: store.get('desk', null),         // set by touching the desk corners
   useScan: store.get('useScan', true),    // also trust the Quest's own room scan?
 };
@@ -988,6 +989,8 @@ function updateDesk(frame, ref) {
   } else if (deskAnchor && !desk && deskWaitUntil && clock.t > deskWaitUntil) { deskWaitUntil = 0; deskLost(); }
   if (finishQueued && calib) { finishQueued = false; finishCalib(frame, ref); }
   if (monitorMode && clock.t > monitorMode.until) endMonitors();
+  while (pendingGear.length && gearMode) gearPoint(frame, ref, pendingGear.shift());
+  updateGear(frame, ref);
   // Like the Quest's own boundary: a wall's outline shows only when you're within arm's reach of it.
   if (!settings.outline) {
     const head = headPose().head;
@@ -1015,7 +1018,7 @@ function updateDesk(frame, ref) {
   if (Math.abs(cabinRoot.position.y - fl) > 0.005) cabinRoot.position.y = fl;   // the ship stands on the real floor
   // orange dot on each fingertip / controller tip while setting the desk
   controllers.forEach((c, i) => {
-    cursors[i].visible = !!((calib || monitorMode) && c.userData.src);
+    cursors[i].visible = !!((calib || monitorMode || gearMode) && c.userData.src);
     if (cursors[i].visible) cursors[i].position.setFromMatrixPosition(c.matrixWorld);
   });
 }
@@ -1042,15 +1045,114 @@ function deskFromScan(obj) {
   const pu = pts.map(p => p.clone().sub(center).dot(u)), pe = pts.map(p => p.clone().sub(center).dot(e));
   const uMin = Math.min(...pu), uMax = Math.max(...pu), eMin = Math.min(...pe), eMax = Math.max(...pe);
   const D = Math.min(0.5, (uMax - uMin) * 0.6), top = obj.matrix.elements[13];
-  monitorBand?.removeFromParent(); monitorBand?.geometry.dispose();
-  monitorBand = new THREE.Mesh(new THREE.BoxGeometry(eMax - eMin + 0.1, 0.7, D), maskMat);
+  monitorBand?.removeFromParent(); monitorBand?.geometry.dispose(); monitorBand = null;
+  if (!gear.length) monitorBand = new THREE.Mesh(new THREE.BoxGeometry(eMax - eMin + 0.1, 0.7, D), maskMat);
+  if (monitorBand) {
   monitorBand.renderOrder = R_MASK;
   monitorBand.position.copy(center).addScaledVector(e, (eMin + eMax) / 2).addScaledVector(u, uMin + D / 2); monitorBand.position.y = top + 0.35;
   monitorBand.rotation.y = theta;
   realRoot.add(monitorBand);
+  }
   applyVisibility();
   console.info('[ufo] ship lined up with the scanned desk', { yawDeg: +(theta * 180 / Math.PI).toFixed(1), seat: seat.toArray().map(v => +v.toFixed(2)) });
 }
+
+// ───────────────────────── your gear: monitors and speakers framed as ship console panels ─────────────────────────
+// Pinch a screen's (or speaker's) top-left corner, then its bottom-right. That rectangle stays real, cut tight, and
+// gets a ship-console bezel around it. Each one is saved as a persistent anchor.
+// Panel frame: origin at the rectangle's centre, +X along its width, +Y up, +Z toward you.
+const GEAR_MARGIN = 0.012;
+let gearMode = null;        // { first: Vector3 | null, until }
+let gear = [];              // { obj, rec, anchor }
+const bezelMat = new THREE.MeshBasicMaterial({ color: 0x1b2130 });
+const bezelGlow = new THREE.LineBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.9 });
+function makeGearObj(w, h) {
+  const g = new THREE.Group(); g.matrixAutoUpdate = false;
+  const iw = w / 2 + GEAR_MARGIN, ih = h / 2 + GEAR_MARGIN, rim = 0.035;
+  const hole = new THREE.Mesh(new THREE.BoxGeometry(iw * 2, ih * 2, 0.14), maskMat);
+  hole.position.z = -0.05; hole.renderOrder = R_MASK; g.add(hole);
+  const outer = new THREE.Shape([[-iw - rim, -ih - rim], [iw + rim, -ih - rim], [iw + rim, ih + rim], [-iw - rim, ih + rim]].map(([x, y]) => new THREE.Vector2(x, y)));
+  outer.holes.push(new THREE.Path([[-iw, -ih], [-iw, ih], [iw, ih], [iw, -ih]].map(([x, y]) => new THREE.Vector2(x, y))));
+  const bezel = new THREE.Mesh(new THREE.ShapeGeometry(outer), bezelMat); bezel.position.z = 0.004; g.add(bezel);
+  const glow = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([[-iw, -ih], [iw, -ih], [iw, ih], [-iw, ih]].map(([x, y]) => new THREE.Vector3(x, y, 0.006))), bezelGlow);
+  g.add(glow);
+  for (const sx of [-1, 1]) {    // two little status lights on the bottom rim
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.006, 12), glowMat(sx < 0 ? 0x8dff9a : 0xffc36b));
+    dot.position.set(sx * (iw - 0.02), -ih - rim / 2, 0.007); g.add(dot);
+  }
+  realRoot.add(g);
+  return g;
+}
+function gearFrame(A, B, head) {
+  const e = new THREE.Vector3(B.x - A.x, 0, B.z - A.z);
+  if (e.lengthSq() < 1e-4) e.set(1, 0, 0);
+  e.normalize();
+  let n = new THREE.Vector3(-e.z, 0, e.x);
+  const c = A.clone().add(B).multiplyScalar(0.5);
+  if (n.dot(new THREE.Vector3(head.x - c.x, 0, head.z - c.z)) < 0) { n.negate(); e.negate(); }
+  const m = new THREE.Matrix4().makeBasis(e, new THREE.Vector3(0, 1, 0), n).setPosition(c);
+  const w = Math.max(0.05, Math.abs(B.clone().sub(A).dot(e))), h = Math.max(0.05, Math.abs(A.y - B.y));
+  return { m, w, h };
+}
+const saveGear = () => { settings.gear = gear.map(g => g.rec); saveSettings(); };
+function addGear(frame, ref, A, B) {
+  const { m, w, h } = gearFrame(A, B, headPose().head);
+  const rec = { w: +w.toFixed(3), h: +h.toFixed(3), pose: m.toArray().map(v => +v.toFixed(4)), uuid: null };
+  const obj = makeGearObj(w, h); obj.matrix.copy(m); obj.matrixWorldNeedsUpdate = true;
+  const item = { obj, rec, anchor: null }; gear.push(item); saveGear();
+  monitorBand?.removeFromParent(); monitorBand = null;      // the tight panels replace the loose band
+  if (!frame.createAnchor) return;
+  const p = new THREE.Vector3().setFromMatrixPosition(m), q = new THREE.Quaternion().setFromRotationMatrix(m);
+  frame.createAnchor(new XRRigidTransform({ x: p.x, y: p.y, z: p.z }, { x: q.x, y: q.y, z: q.z, w: q.w }), ref)
+    .then(async a => {
+      item.anchor = a;
+      if (a.requestPersistentHandle) { rec.uuid = await a.requestPersistentHandle(); (state.anchors ??= {})[rec.uuid] = a; saveGear(); }
+    })
+    .catch(e => console.warn('gear anchor failed', e));
+}
+function restoreGear(session) {
+  for (const rec of settings.gear || []) {
+    const obj = makeGearObj(rec.w, rec.h); obj.matrix.fromArray(rec.pose); obj.matrixWorldNeedsUpdate = true;
+    const item = { obj, rec, anchor: null }; gear.push(item);
+    const cached = rec.uuid && state.anchors?.[rec.uuid];
+    if (cached) item.anchor = cached;
+    else if (rec.uuid && session.restorePersistentAnchor)
+      session.restorePersistentAnchor(rec.uuid).then(a => { item.anchor = a; (state.anchors ??= {})[rec.uuid] = a; }).catch(() => {});
+  }
+  if (gear.length) { monitorBand?.removeFromParent(); monitorBand = null; }
+}
+function disposeGear() { for (const g of gear) disposeObj(g.obj); gear = []; }
+function clearGear() {
+  const session = renderer.xr.getSession();
+  for (const g of gear) if (g.rec.uuid && session?.deletePersistentAnchor) session.deletePersistentAnchor(g.rec.uuid).catch(() => {});
+  disposeGear(); settings.gear = []; saveSettings();
+}
+function startGear() {
+  if (!renderer.xr.isPresenting) { setStatus('Put the headset on to frame your monitors'); return; }
+  gearMode = { first: null, until: clock.t + 60 }; placeTip();
+  showTip('Frame your monitors & speakers', 'Pinch the TOP-LEFT corner of a screen or speaker, then its BOTTOM-RIGHT corner.', true);
+}
+function gearPoint(frame, ref, p) {
+  gearMode.until = clock.t + 60;
+  if (!gearMode.first) {
+    gearMode.first = p.clone();
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), cursorMat); m.position.copy(p); m.renderOrder = R_UI; calibMarkers.add(m);
+    showTip('Frame your monitors & speakers', 'Now its BOTTOM-RIGHT corner.', true);
+    return;
+  }
+  addGear(frame, ref, gearMode.first, p); gearMode.first = null; calibMarkers.clear();
+  showTip(`${gear.length} framed ✓`, 'Next one: pinch its TOP-LEFT corner. Or point at this sign and pinch Done.', true);
+}
+function endGear() { gearMode = null; tip.visible = false; calibMarkers.clear(); setStatus(gear.length ? `${gear.length} panel${gear.length > 1 ? 's' : ''} framed ✓` : ''); drawMenu(); }
+function updateGear(frame, ref) {
+  for (const g of gear) {
+    if (!g.anchor || !frame.trackedAnchors?.has(g.anchor)) continue;
+    const p = frame.getPose(g.anchor.anchorSpace, ref);
+    if (p) { g.obj.matrix.fromArray(p.transform.matrix); g.obj.matrixWorldNeedsUpdate = true; }
+  }
+  if (gearMode && clock.t > gearMode.until) endGear();
+}
+const pendingGear = [];
 
 // ───────────────────────── in-headset menu ─────────────────────────
 const MW = 1024, MH = 744;
@@ -1062,15 +1164,16 @@ menu.renderOrder = R_UI; menu.visible = false; scene.add(menu);
 let markMode = false, statusText = '';
 const BTN = [];
 SCENES.forEach((s, i) => BTN.push({ id: 'scene:' + s.key, x: 32 + i * 242, y: 96, w: 226, h: 96 }));
-[['videoMode', 'play', 'demo'], ['mark', 'size', 'clear'], ['floor', 'outline', 'rotate'], ['desk', 'scan', 'rescan']].forEach((row, r) =>
+[['videoMode', 'play', 'demo'], ['mark', 'size', 'clear'], ['floor', 'outline', 'rotate'], ['desk', 'gear', 'scan']].forEach((row, r) =>
   row.forEach((id, c) => BTN.push({ id, x: 32 + c * 320, y: 216 + r * 104, w: 304, h: 88 })));
 function btnLabel(id) {
   if (id.startsWith('scene:')) return SCENES.find(s => 'scene:' + s.key === id).label;
   return {
     videoMode: 'Video: ' + settings.videoMode, play: videoLoaded ? (video.paused ? 'Play video' : 'Pause video') : (demoPaused ? 'Play demo clip' : 'Pause demo clip'), rotate: 'Rotate ship ↻ 15°', demo: 'Demo clip',
+    gear: gearMode ? 'Framing…' : '🖥 Frame my monitors',
     desk: calib ? 'Setting desk…' : settings.desk ? 'Set my desk again' : '⚑ Set my desk', scan: 'Quest room scan: ' + (settings.useScan ? 'on' : 'off'),
     mark: markMode ? 'Marking… (pinch at it)' : 'Mark real zone', size: 'Zone size: ' + Math.round(settings.zoneSize * 100) + ' cm',
-    clear: 'Clear real zones', floor: 'Real floor: ' + (settings.realFloor ? 'on' : 'off'),
+    clear: 'Clear real zones & frames', floor: 'Real floor: ' + (settings.realFloor ? 'on' : 'off'),
     outline: 'Room outline: ' + (settings.outline ? 'on' : 'off'), rescan: 'Rescan room',
   }[id];
 }
@@ -1129,6 +1232,10 @@ function pointAt(c) {
 function onSelect(i) {
   if (window.__xrBridge?.consumes?.(i)) return;   // the press was on the Claude panel
   const c = controllers[i]; const { id } = pointAt(c);
+  if (gearMode) {
+    if (hitTip()) { endGear(); return; }
+    if (!id) { pendingGear.push(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld)); return; }
+  }
   if (monitorMode) {
     if (hitTip()) { endMonitors(); return; }
     if (!id && desk) { addMonitor(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld)); return; }
@@ -1152,10 +1259,11 @@ function doAction(id) {
     case 'rotate': settings.yaw = (settings.yaw + 15) % 360; break;
     case 'mark': markMode = !markMode; setStatus(markMode ? 'Hold your hand or controller at the thing, then pinch / pull the trigger' : ''); break;
     case 'size': settings.zoneSize = ZONE_SIZES[(ZONE_SIZES.indexOf(settings.zoneSize) + 1) % ZONE_SIZES.length]; break;
-    case 'clear': clearZones(); break;
+    case 'clear': clearZones(); clearGear(); break;
     case 'floor': settings.realFloor = !settings.realFloor; break;
     case 'outline': settings.outline = !settings.outline; break;
     case 'desk': startCalib(); break;
+    case 'gear': gearMode ? endGear() : startGear(); break;
     case 'scan': settings.useScan = !settings.useScan; if (!settings.useScan) clearPlanes(); break;
     case 'rescan': {
       const s = renderer.xr.getSession();
@@ -1221,10 +1329,12 @@ function onSessionStart(session, resumed) {
   else firstXRFrame = true;
   restoreZones(session);
   restoreDesk(session);
+  restoreGear(session);
   if (settings.scene === 'video' && videoLoaded) video.play().catch(() => {});
   session.addEventListener('end', () => {
     fakeRoom.visible = true; menu.visible = false; controls.enabled = true;
     for (const z of zones) disposeObj(z.obj); zones = [];
+    disposeGear(); gearMode = null;
     disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = null; tip.visible = false; state.floorLevel = null; cabinRoot.position.y = 0; calibMarkers.clear(); applyVisibility();
     for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear();
     state.anchors = {}; state.menuPose = null;
@@ -1301,6 +1411,7 @@ function describe() {
     detectedPlanes: [...planeObjs.values()].map(r => r.obj.userData.label),
     markMode, menuVisible: menu.visible, status: statusText,
     desk: desk ? { center: new THREE.Vector3().setFromMatrixPosition(desk.matrix).toArray().map(v => +v.toFixed(3)), yawDeg: +(desk.theta * 180 / Math.PI).toFixed(1), widthM: +settings.desk.width.toFixed(2), monitors: settings.desk.monitors.length, anchored: !!deskAnchor } : (settings.desk ? 'saved but not found yet' : 'not set'),
+    framedGear: gear.map(g => ({ w: g.rec.w, h: g.rec.h, anchored: !!g.anchor })), framing: gearMode ? (gearMode.first ? 'bottom-right corner' : 'top-left corner') : null,
     settingDesk: calib ? ['front-left corner', 'front-right corner', 'saving'][calib.step] : monitorMode ? 'monitors (optional)' : null, useQuestScan: settings.useScan,
     scanDesk: scanDesk ? { yawDeg: +(scanDesk.theta * 180 / Math.PI).toFixed(1), seat: scanDesk.seat.toArray().map(v => +v.toFixed(2)) } : null,
   };
@@ -1311,4 +1422,4 @@ showScene(settings.scene);
 SHELL.scene.add(scene);
 if (renderer.xr.isPresenting) onSessionStart(renderer.xr.getSession(), true);
 if (actx && actx.state === 'running') ensureAudio();
-SHELL.world = { frame: frameFn, dispose, describe, debug: { deskFrame, buildDesk, disposeDesk, applyVisibility, buildPlaneObject } };
+SHELL.world = { frame: frameFn, dispose, describe, debug: { deskFrame, buildDesk, disposeDesk, applyVisibility, buildPlaneObject, startGear, gearFrame, makeGearObj } };
