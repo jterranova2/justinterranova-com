@@ -25,10 +25,18 @@ export function closeCamera(state) {
 }
 // Without the Headset cameras permission the Quest still hands the page a "camera", but it plays a stand-in
 // animation (pink bubbles on black). A real room is never that dark.
-export function isPlaceholder(cam) {
-  const { L } = luma(grab(cam, 160), 80);
-  let m = 0; for (const v of L) m += v;
-  return m / L.length < 0.04;
+// A just-opened camera can also give a few black frames, so give it a moment before deciding.
+export async function isPlaceholder(cam) {
+  let m = 0;
+  for (let i = 0; i < 6; i++) {
+    const { L } = luma(grab(cam, 160), 80);
+    m = 0; for (const v of L) m += v; m /= L.length;
+    if (m >= 0.04) return false;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  const c = grab(cam);
+  if (window.__xrBridge) c.toBlob(b => fetch('/__bridge/snapshot', { method: 'POST', body: b }).then(r => r.json()).then(j => console.info('[sense] stand-in frame', j.path, 'mean', m.toFixed(3))).catch(() => {}), 'image/png');
+  return true;
 }
 export function grab(cam, W = 640) {
   const v = cam.video, H = Math.round(W * v.videoHeight / v.videoWidth);
