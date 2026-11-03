@@ -688,7 +688,8 @@ function buildPlaneObject(label, orientation, polygon, matrix) {
   else if (orientation === 'horizontal') {
     // Keep the whole thing real from the floor up to just above its top, so legs, chair and keyboard stay visible
     // without opening a big hole into your real wall behind the desk.
-    const top = matrix.elements[13] - floorLevel(); depth = top + 0.04; offset = -top;   // height above the real floor
+    const above = lbl === 'table' ? 0.15 : 0.04;   // desks: keyboard, mouse and resting hands stay real too
+    const top = matrix.elements[13] - floorLevel(); depth = top + above; offset = -top;   // height above the real floor
   } else { depth = 0.3; offset = -0.15; }    // vertical things (door, monitor): a thin slab
   const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
   geo.rotateX(-Math.PI / 2); geo.translate(0, offset, 0);
@@ -1018,9 +1019,9 @@ function updateDesk(frame, ref) {
     if (cursors[i].visible) cursors[i].position.setFromMatrixPosition(c.matrixWorld);
   });
 }
-function clearPlanes() { for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear(); scanDesk = null; applyVisibility(); }
+function clearPlanes() { for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear(); scanDesk = null; monitorBand?.removeFromParent(); monitorBand = null; applyVisibility(); }
 // From a scanned table: its edge nearest you is the front edge.
-let scanDesk = null;
+let scanDesk = null, monitorBand = null;
 function deskFromScan(obj) {
   if (!renderer.xr.isPresenting) return;
   // Scanned desk outlines are often irregular (many short edges), so don't look for a straight front edge.
@@ -1036,6 +1037,17 @@ function deskFromScan(obj) {
   const theta = Math.atan2(u.x, u.z);
   const seat = new THREE.Vector3(head.x, 0, head.z);   // the ship is centred on where you're actually sitting
   scanDesk = { theta, seat };
+  // Monitors aren't in the Quest's scan, so keep a band along the back of the desk real, up to 70 cm above it.
+  const e = new THREE.Vector3(u.z, 0, -u.x);
+  const pu = pts.map(p => p.clone().sub(center).dot(u)), pe = pts.map(p => p.clone().sub(center).dot(e));
+  const uMin = Math.min(...pu), uMax = Math.max(...pu), eMin = Math.min(...pe), eMax = Math.max(...pe);
+  const D = Math.min(0.5, (uMax - uMin) * 0.6), top = obj.matrix.elements[13];
+  monitorBand?.removeFromParent(); monitorBand?.geometry.dispose();
+  monitorBand = new THREE.Mesh(new THREE.BoxGeometry(eMax - eMin + 0.1, 0.7, D), maskMat);
+  monitorBand.renderOrder = R_MASK;
+  monitorBand.position.copy(center).addScaledVector(e, (eMin + eMax) / 2).addScaledVector(u, uMin + D / 2); monitorBand.position.y = top + 0.35;
+  monitorBand.rotation.y = theta;
+  realRoot.add(monitorBand);
   applyVisibility();
   console.info('[ufo] ship lined up with the scanned desk', { yawDeg: +(theta * 180 / Math.PI).toFixed(1), seat: seat.toArray().map(v => +v.toFixed(2)) });
 }
