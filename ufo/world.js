@@ -914,6 +914,12 @@ function deskFrame(L, R, head) {
 function disposeDesk() { if (desk) for (const o of desk.objs) disposeObj(o); desk = null; }
 function buildDesk(matrix, rec) {
   disposeDesk();
+  // A desk top is somewhere between 40 cm and 1.25 m above the floor. Anything else is a bad setup: drop it.
+  const height = matrix.elements[13] - floorLevel();
+  if (renderer.xr.isPresenting && state.floorLevel != null && (height < 0.4 || height > 1.25)) {
+    console.warn('[ufo] ignoring a saved desk at an impossible height:', +height.toFixed(2), 'm');
+    settings.desk = null; deskAnchor = null; saveSettings(); applyVisibility(); return;
+  }
   const w = rec.width / 2 + 0.03;
   const top = buildPlaneObject('table', 'horizontal', [[-w, -DESK_DEPTH], [w, -DESK_DEPTH], [w, 0.03], [-w, 0.03]].map(([x, z]) => ({ x, y: 0, z })), matrix);
   const objs = [top];
