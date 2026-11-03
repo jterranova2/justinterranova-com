@@ -1200,7 +1200,7 @@ function deskSkin(polygon) {
   return g;
 }
 // (reads the saved list, not `gear`, so building the preview room before `gear` exists is fine)
-function skinDesk() { return settings.skinDesk && (!!state.meshGearOn || (settings.gear || []).some(r => r.kind === 'keyboard')); }
+function skinDesk() { return settings.skinDesk && (!!state.meshGearOn || !!state.depthOn || (settings.gear || []).some(r => r.kind === 'keyboard')); }
 function rebuildPlanes() { for (const [, r] of planeObjs) r.t = null; }
 
 // Where the desk is, for the detector: its top height, which way you face it, and how deep it goes.
@@ -1354,7 +1354,7 @@ function syncMeshGear(frame, ref) {
   });
   disposeMeshGear();
   const objs = [];
-  if (out.length) {
+  if (out.length && !renderer.xr.getSession()?.enabledFeatures?.includes('depth-sensing')) {   // live depth does this better when it's on
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
     const m = new THREE.Mesh(geo, meshMaskMat); m.renderOrder = R_MASK; m.frustumCulled = false; realRoot.add(m); objs.push(m);
   }
@@ -1369,6 +1369,96 @@ function syncMeshGear(frame, ref) {
   for (const g of gear) g.obj.visible = !!g.rec.auto;   // hand-drawn frames step aside for the moulded version
   rebuildPlanes(); monitorBand?.removeFromParent(); monitorBand = null;
   console.info('[ufo] moulded to the room mesh:', meshGear.tris, 'triangles on the desk, from', frame.detectedMeshes.size, 'meshes');
+}
+
+// ───────────────────────── live depth: keep real whatever stands on the desk, pixel by pixel ─────────────────────────
+// The Quest measures how far away every point in view is, about 30 times a second (the same sensor that lets
+// your hands show through virtual things). Each pixel asks: where is the real surface I'm looking at? If that
+// point stands on the desk (above its top, inside its footprint, not the wall behind), the pixel stays real.
+// So monitors, speakers and anything you put down are cut to their real outline, and follow them if they move.
+const depthTex = new THREE.DataArrayTexture(null, 1, 1, 1);   // stands in for the Quest's own GPU texture
+const MAX_WALLS = 4;
+const depthMat = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  uniforms: {
+    uDepth: { value: depthTex }, uLayer: { value: 0 }, uOn: { value: 0 },
+    uDepthVP: { value: [new THREE.Matrix4(), new THREE.Matrix4()] }, uDepthInvVP: { value: [new THREE.Matrix4(), new THREE.Matrix4()] },
+    uRaw: { value: 1 },
+    uCenter: { value: new THREE.Vector3() }, uE: { value: new THREE.Vector3(1, 0, 0) }, uU: { value: new THREE.Vector3(0, 0, 1) },
+    uBounds: { value: new THREE.Vector4() },   // eMin, eMax, uBack, uFront (desk axes, metres)
+    uTop: { value: 0 }, uWalls: { value: Array.from({ length: MAX_WALLS }, () => new THREE.Vector4(0, 0, 0, 1e9)) },
+  },
+  vertexShader: /* glsl */`
+    varying vec3 vW;
+    void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: /* glsl */`
+    precision highp float; precision highp sampler2DArray;
+    uniform sampler2DArray uDepth; uniform int uLayer; uniform float uOn, uRaw, uTop;
+    uniform mat4 uDepthVP[2], uDepthInvVP[2];
+    uniform vec3 uCenter, uE, uU; uniform vec4 uBounds; uniform vec4 uWalls[${MAX_WALLS}];
+    uniform mat4 projectionMatrix;
+    layout(location = 0) out vec4 outColor;
+    varying vec3 vW;
+    void main() {
+      if (uOn < 0.5) discard;
+      mat4 VP = uLayer == 0 ? uDepthVP[0] : uDepthVP[1];
+      mat4 IVP = uLayer == 0 ? uDepthInvVP[0] : uDepthInvVP[1];
+      vec4 c = VP * vec4(vW, 1.0); vec2 uv = (c.xy / c.w) * 0.5 + 0.5;
+      if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) discard;
+      float d = texture(uDepth, vec3(uv, float(uLayer))).r * uRaw;
+      if (d <= 0.0 || d >= 1.0) discard;
+      vec4 p4 = IVP * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); vec3 P = p4.xyz / p4.w;   // the real surface here
+      if (P.y < uTop + 0.025 || P.y > uTop + 0.8) discard;
+      vec3 q = P - uCenter; float e = dot(q, uE), u = dot(q, uU);
+      if (e < uBounds.x || e > uBounds.y || u < uBounds.z || u > uBounds.w) discard;
+      for (int i = 0; i < ${MAX_WALLS}; i++) if (abs(dot(uWalls[i].xyz, P) + uWalls[i].w) < 0.07) discard;
+      vec4 s = projectionMatrix * viewMatrix * vec4(P, 1.0);
+      gl_FragDepth = clamp(s.z / s.w * 0.5 + 0.5, 0.0, 1.0);   // the real thing's own depth, so it covers the ship
+      outColor = vec4(0.0);
+    }`,
+  side: THREE.BackSide, colorWrite: false, depthWrite: true, depthTest: false,
+});
+const depthShell = new THREE.Mesh(new THREE.SphereGeometry(1.6, 48, 24), depthMat);
+depthShell.renderOrder = R_MASK - 1; depthShell.frustumCulled = false; scene.add(depthShell);
+let depthOK = false, depthInfo = [null, null];
+// three draws each eye with its own camera; tell the shader which eye (and which depth layer) this is
+depthShell.onBeforeRender = (r, s, cam) => {
+  const xc = renderer.xr.getCamera();
+  depthMat.uniforms.uLayer.value = xc.cameras?.[1] === cam ? 1 : 0;
+};
+function updateDepth(frame, ref) {
+  const session = renderer.xr.getSession();
+  depthOK = false; depthMat.uniforms.uOn.value = 0;
+  if (!session?.enabledFeatures?.includes('depth-sensing') || session.depthUsage !== 'gpu-optimized') return;
+  const dg = deskGeom(); if (!dg) return;
+  const pose = frame.getViewerPose(ref); if (!pose) return;
+  const binding = renderer.xr.getBinding(); if (!binding?.getDepthInformation) return;
+  for (let i = 0; i < Math.min(2, pose.views.length); i++) {
+    let info = null; try { info = binding.getDepthInformation(pose.views[i]); } catch { info = null; }
+    if (!info) return;
+    depthInfo[i] = info;
+    const P = new THREE.Matrix4().fromArray(info.projectionMatrix || pose.views[i].projectionMatrix);
+    const V = new THREE.Matrix4().fromArray((info.transform || pose.views[i].transform).inverse.matrix);
+    depthMat.uniforms.uDepthVP.value[i].multiplyMatrices(P, V);
+    depthMat.uniforms.uDepthInvVP.value[i].copy(depthMat.uniforms.uDepthVP.value[i]).invert();
+  }
+  const props = renderer.properties.get(depthTex);
+  props.__webglTexture = depthInfo[0].texture; props.__webglInit = true;
+  depthMat.uniforms.uRaw.value = 1;
+  // the desk, in its own axes
+  const c = dg.center, pe = [], pu = [];
+  for (const [p] of dg.edges) { const d = p.clone().sub(c); pe.push(d.dot(dg.e)); pu.push(d.dot(dg.u)); }
+  depthMat.uniforms.uCenter.value.copy(c); depthMat.uniforms.uE.value.copy(dg.e); depthMat.uniforms.uU.value.copy(dg.u);
+  depthMat.uniforms.uBounds.value.set(Math.min(...pe) - 0.1, Math.max(...pe) + 0.1, Math.min(...pu) - 0.25, Math.max(...pu) - 0.02);
+  depthMat.uniforms.uTop.value = dg.top;
+  const walls = [...planeObjs.values()].filter(r => r.obj.userData.label === 'wall').map(r => {
+    const e = r.obj.matrix.elements, n = new THREE.Vector3(e[4], e[5], e[6]).normalize(), p = new THREE.Vector3(e[12], e[13], e[14]);
+    return { n, d: -n.dot(p), dist: Math.abs(n.dot(c) - n.dot(p)) };
+  }).sort((a, b) => a.dist - b.dist).slice(0, MAX_WALLS);
+  depthMat.uniforms.uWalls.value.forEach((w, i) => walls[i] ? w.set(walls[i].n.x, walls[i].n.y, walls[i].n.z, walls[i].d) : w.set(0, 0, 0, 1e9));
+  depthShell.position.copy(headPose().head);
+  depthMat.uniforms.uOn.value = 1; depthOK = true;
+  if (!state.depthOn) { state.depthOn = true; rebuildPlanes(); console.info('[ufo] live depth on: whatever stands on the desk stays real'); }
 }
 
 // ───────────────────────── in-headset menu ─────────────────────────
@@ -1533,10 +1623,16 @@ let firstXRFrame = false;
 enterBtn.addEventListener('click', async () => {
   ensureAudio();
   try {
+    const base = ['plane-detection', 'mesh-detection', 'anchors', 'hand-tracking'];
     const session = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: [],   // no 'local-floor': see index.html
-      optionalFeatures: ['plane-detection', 'mesh-detection', 'anchors', 'hand-tracking'],
+      optionalFeatures: [...base, 'depth-sensing'],
+      depthSensing: { usagePreference: ['gpu-optimized'], dataFormatPreference: ['unsigned-short', 'float32'] },
+    }).catch(e => {           // if live depth is the problem, board without it
+      console.warn('[ufo] boarding with live depth failed, trying without:', e?.message || e);
+      return navigator.xr.requestSession('immersive-ar', { requiredFeatures: [], optionalFeatures: base });
     });
+    console.info('[ufo] session features', JSON.stringify(session.enabledFeatures || []), 'depth', session.depthUsage, session.depthDataFormat);
     await renderer.xr.setSession(session);
     onSessionStart(session, false);
   } catch (e) { setStatus('Could not start: ' + e.message); }
@@ -1554,7 +1650,7 @@ function onSessionStart(session, resumed) {
   session.addEventListener('end', () => {
     fakeRoom.visible = true; menu.visible = false; controls.enabled = true;
     for (const z of zones) disposeObj(z.obj); zones = [];
-    disposeGear(); disposeMeshGear(); gearMode = null; autoScan = null; autoTried = false; autoAt = Infinity; if (sense) sense.closeCamera(state);
+    disposeGear(); disposeMeshGear(); state.depthOn = false; gearMode = null; autoScan = null; autoTried = false; autoAt = Infinity; if (sense) sense.closeCamera(state);
     disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = state.scanDesk = null; tip.visible = false; state.floorLevel = null; cabinRoot.position.y = 0; calibMarkers.clear(); applyVisibility();
     for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear();
     state.anchors = {}; state.menuPose = null;
@@ -1585,6 +1681,7 @@ function frameFn(now, frame) {
     updateDesk(frame, ref);
     autoScanFrame(frame, ref);
     if (settings.useScan) syncMeshGear(frame, ref);
+    updateDepth(frame, ref);
     if (!planesSeen && !settings.desk && settings.useScan && planeCheckAt && t > planeCheckAt) { setStatus('No room scan found. Try "Rescan room" so your desk stays real.'); planeCheckAt = 0; }
     for (const z of zones) {
       if (z.anchor && frame.trackedAnchors?.has(z.anchor)) {
@@ -1609,6 +1706,7 @@ function frameFn(now, frame) {
 
 // ───────────────────────── mount / dispose ─────────────────────────
 function dispose() {
+  renderer.properties.remove(depthTex);   // the Quest owns that texture: don't let the cleanup below delete it
   ac.abort();
   for (const [t, type, fn] of xrListeners) t.removeEventListener(type, fn);
   for (const c of controllers) c.remove(c.userData.line);
@@ -1635,7 +1733,7 @@ function describe() {
     detectedPlanes: [...planeObjs.values()].map(r => r.obj.userData.label),
     markMode, menuVisible: menu.visible, status: statusText,
     desk: desk ? { center: new THREE.Vector3().setFromMatrixPosition(desk.matrix).toArray().map(v => +v.toFixed(3)), yawDeg: +(desk.theta * 180 / Math.PI).toFixed(1), widthM: +settings.desk.width.toFixed(2), monitors: settings.desk.monitors.length, anchored: !!deskAnchor } : (settings.desk ? 'saved but not found yet' : 'not set'),
-    framedGear: gear.map(g => ({ kind: g.rec.kind || 'by hand', w: g.rec.w, h: g.rec.h, anchored: !!g.anchor })), meshGear: meshGear ? { triangles: meshGear.tris } : (renderer.xr.getSession()?.enabledFeatures?.includes('mesh-detection') ? 'waiting for the room mesh' : 'mesh not enabled this session'), findingGear: autoScan ? { frames: autoScan.frames, secondsLeft: +(autoScan.until - clock.t).toFixed(1) } : null, camCal: settings.camCal, skinDesk: skinDesk(), framing: gearMode ? (gearMode.first ? 'bottom-right corner' : 'top-left corner') : null,
+    framedGear: gear.map(g => ({ kind: g.rec.kind || 'by hand', w: g.rec.w, h: g.rec.h, anchored: !!g.anchor })), liveDepth: depthOK ? 'on' : (renderer.xr.getSession()?.enabledFeatures?.includes('depth-sensing') ? 'enabled, no data yet' : 'not enabled this session'), meshGear: meshGear ? { triangles: meshGear.tris } : (renderer.xr.getSession()?.enabledFeatures?.includes('mesh-detection') ? 'waiting for the room mesh' : 'mesh not enabled this session'), findingGear: autoScan ? { frames: autoScan.frames, secondsLeft: +(autoScan.until - clock.t).toFixed(1) } : null, camCal: settings.camCal, skinDesk: skinDesk(), framing: gearMode ? (gearMode.first ? 'bottom-right corner' : 'top-left corner') : null,
     settingDesk: calib ? ['front-left corner', 'front-right corner', 'saving'][calib.step] : monitorMode ? 'monitors (optional)' : null, useQuestScan: settings.useScan,
     scanDesk: scanDesk ? { yawDeg: +(scanDesk.theta * 180 / Math.PI).toFixed(1), seat: scanDesk.seat.toArray().map(v => +v.toFixed(2)) } : null,
   };
