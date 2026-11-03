@@ -696,7 +696,12 @@ function buildPlaneObject(label, orientation, polygon, matrix) {
   if (lbl === 'floor') { mesh.userData.kind = 'floor'; g.add(mesh); return g; }
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), edgeMat);
   edges.renderOrder = R_OVERLAY; edges.userData.kind = 'outline';
-  g.add(mesh, edges);
+  g.add(edges);
+  // Only things within reach stay real; far furniture (shelves across the room) becomes ship, outline only,
+  // so it doesn't poke up into the window. Desks always stay real.
+  const far = lbl !== 'table' && renderer.xr.isPresenting &&
+    new THREE.Vector3().setFromMatrixPosition(matrix).setY(0).distanceTo(headPose().head.setY(0)) > 1.6;
+  if (!far) g.add(mesh);
   return g;
 }
 function disposeObj(o) { o.traverse(c => c.geometry?.dispose()); o.removeFromParent(); }
