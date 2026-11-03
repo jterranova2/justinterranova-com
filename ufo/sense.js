@@ -23,6 +23,13 @@ export async function openCamera(state) {
 export function closeCamera(state) {
   state.cam?.stream.getTracks().forEach(t => t.stop()); state.cam?.video.remove(); state.cam = null;
 }
+// Without the Headset cameras permission the Quest still hands the page a "camera", but it plays a stand-in
+// animation (pink bubbles on black). A real room is never that dark.
+export function isPlaceholder(cam) {
+  const { L } = luma(grab(cam, 160), 80);
+  let m = 0; for (const v of L) m += v;
+  return m / L.length < 0.04;
+}
 export function grab(cam, W = 640) {
   const v = cam.video, H = Math.round(W * v.videoHeight / v.videoWidth);
   const c = Object.assign(document.createElement('canvas'), { width: W, height: H });

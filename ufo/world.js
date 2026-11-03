@@ -1235,17 +1235,19 @@ async function startAutoScan(quiet = false) {
   if (autoScan) return;
   const dg = deskGeom();
   if (!dg) { if (!quiet) setStatus('I need your desk first: wait for the room scan or press "Set my desk"'); return; }
-  autoScan = { until: Infinity, next: 0, busy: true, obs: [], cal: settings.camCal || null, frames: 0 };
+  const s = autoScan = { until: Infinity, next: 0, busy: true, obs: [], cal: settings.camCal || null, frames: 0 };
   placeTip(); showTip('Finding your gear…', 'Getting the camera ready.');
   try {
     sense ??= await import('./sense.js' + new URL(import.meta.url).search);
     const [cam] = await Promise.all([sense.openCamera(state), sense.loadDetector(state)]);
-    autoScan.cam = cam; autoScan.busy = false; autoScan.until = clock.t + 6;
+    if (autoScan !== s) return;   // cancelled (session ended) while the camera was opening
+    if (sense.isPlaceholder(cam)) { sense.closeCamera(state); throw new Error('The Quest is showing the browser a stand-in picture, not your room'); }
+    s.cam = cam; s.busy = false; s.until = clock.t + 6;
     showTip('Finding your gear…', 'Look at your desk and slowly turn your head a little left and right.');
   } catch (e) {
     console.warn('[ufo] auto scan could not start', e);
-    autoScan = null;
-    showTip('I can’t see through the cameras', (e?.name === 'NotAllowedError' ? 'Camera permission was blocked. ' : (e?.message || e) + '. ') + 'Allow the headset cameras for this page, then press "Find my gear" again.', true);
+    if (autoScan === s) autoScan = null;
+    showTip('I can’t see through the cameras', (e?.name === 'NotAllowedError' ? 'Camera permission was blocked. ' : (e?.message || e) + '. ') + 'Quest Settings → Privacy & Safety → App permissions → Headset cameras: turn on Browser. Then press "Find my gear".', true);
   }
   drawMenu();
 }
@@ -1319,7 +1321,7 @@ const mCtx = mCanvas.getContext('2d');
 const mTex = new THREE.CanvasTexture(mCanvas); mTex.colorSpace = THREE.SRGBColorSpace;
 const menu = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.56 * 744 / 1024), new THREE.MeshBasicMaterial({ map: mTex, transparent: true, depthTest: false, toneMapped: false }));
 menu.renderOrder = R_UI; menu.visible = false; scene.add(menu);
-let markMode = false, statusText = '';
+let markMode = false, statusText = '', menuUse = 0;   // the menu tucks away after 10 s unused; squeeze a grip to bring it back
 const BTN = [];
 SCENES.forEach((s, i) => BTN.push({ id: 'scene:' + s.key, x: 32 + i * 242, y: 96, w: 226, h: 96 }));
 [['videoMode', 'play', 'demo'], ['auto', 'mark', 'clear'], ['floor', 'outline', 'rotate'], ['desk', 'gear', 'scan']].forEach((row, r) =>
@@ -1364,7 +1366,7 @@ function recallMenu() {
   const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0));
   // Low and to the right, so it never covers the window or your monitor.
   menu.position.copy(head).addScaledVector(fwd, 0.55).addScaledVector(right, 0.3); menu.position.y = head.y - 0.28;
-  menu.lookAt(head);
+  menu.lookAt(head); menu.visible = true; menuUse = clock.t;
 }
 
 // ───────────────────────── controllers / pointing ─────────────────────────
@@ -1485,7 +1487,7 @@ enterBtn.addEventListener('click', async () => {
 function onSessionStart(session, resumed) {
   if (!resumed) state.floorLevel = null;   // a fresh session has a fresh origin
   cabinRoot.position.y = floorLevel();
-  fakeRoom.visible = false; menu.visible = true; controls.enabled = false;
+  fakeRoom.visible = false; menu.visible = true; menuUse = clock.t; controls.enabled = false;
   if (resumed && state.menuPose) { menu.position.copy(state.menuPose.p); menu.quaternion.copy(state.menuPose.q); }
   else firstXRFrame = true;
   restoreZones(session);
@@ -1538,11 +1540,13 @@ function frameFn(now, frame) {
     let changed = false;
     controllers.forEach((c, i) => {
       const { id, dist } = c.userData.src ? pointAt(c) : { id: null, dist: 0 };
+      if (id) menuUse = t;
       c.userData.line.scale.z = dist; c.userData.line.visible = !!c.userData.src;
       const h = id && id !== 'panel' ? id : null;
       if (hovered[i] !== h) { hovered[i] = h; changed = true; }
     });
     if (changed) drawMenu();
+    if (menu.visible && t - menuUse > 10 && !calib && !gearMode && !monitorMode && !markMode) menu.visible = false;
   } else controls.update();
 }
 
