@@ -24,6 +24,8 @@ const settings = {
   outline: store.get('outline', true),
   realFloor: store.get('realFloor', false),
   zoneSize: store.get('zoneSize', 0.4),
+  desk: store.get('desk', null),         // set by touching the desk corners
+  useScan: store.get('useScan', true),    // also trust the Quest's own room scan?
 };
 const saveSettings = () => { for (const k in settings) store.set(k, settings[k]); };
 
@@ -697,7 +699,8 @@ function applyVisibility() {
     if (o.userData.kind === 'outline') o.visible = settings.outline;
     if (o.userData.kind === 'floor') o.visible = settings.realFloor;
   });
-  cabinRoot.rotation.y = THREE.MathUtils.degToRad(settings.yaw);
+  cabinRoot.rotation.y = (desk ? desk.theta : 0) + THREE.MathUtils.degToRad(settings.yaw);
+  if (desk) cabinRoot.position.set(desk.seat.x, 0, desk.seat.z); else cabinRoot.position.set(0, 0, 0);   // centred on your chair
 }
 
 const planeObjs = new Map();
@@ -816,29 +819,165 @@ function updateHands(frame, ref) {
   ctrlMasks.count = ci; ctrlMasks.instanceMatrix.needsUpdate = true;
 }
 
+// ───────────────────────── your desk: touch its corners and the ship lines up around it ─────────────────────────
+// The Quest's own room scan belongs to whatever play space it last saved (possibly another game's boundary), and the
+// headset's origin is simply wherever you stood when you boarded. So the desk is set here directly, saved as a
+// persistent anchor, and the ship is built around the desk instead of around the origin.
+//
+// Desk frame: origin at the middle of the desk's front edge, at desk height; +X along the edge, +Z toward you.
+const DESK_DEPTH = 0.75, SEAT_BACK = 0.6;
+let desk = null;            // { objs, matrix, theta, seat }
+let deskAnchor = null, deskWaitUntil = 0, finishQueued = false;
+let calib = null;           // { step: 0 | 1 | 2, pts: [], monitors: [] }
+const calibMarkers = new THREE.Group(); scene.add(calibMarkers);
+const cursorMat = new THREE.MeshBasicMaterial({ color: 0xffa040, depthTest: false, transparent: true, opacity: 0.95 });
+const cursors = [0, 1].map(() => { const m = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8), cursorMat); m.renderOrder = R_UI; m.visible = false; scene.add(m); return m; });
+
+const tipC = document.createElement('canvas'); tipC.width = 1024; tipC.height = 230; const tipX = tipC.getContext('2d');
+const tipTex = new THREE.CanvasTexture(tipC); tipTex.colorSpace = THREE.SRGBColorSpace;
+const tip = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5 * 230 / 1024), new THREE.MeshBasicMaterial({ map: tipTex, transparent: true, depthTest: false, toneMapped: false }));
+tip.renderOrder = R_UI; tip.visible = false; scene.add(tip);
+function showTip(title, sub) {
+  const x = tipX; x.clearRect(0, 0, 1024, 230);
+  x.fillStyle = 'rgba(12,16,26,0.9)'; x.beginPath(); x.roundRect(0, 0, 1024, 230, 30); x.fill();
+  x.strokeStyle = '#ffa040'; x.lineWidth = 4; x.beginPath(); x.roundRect(2, 2, 1020, 226, 28); x.stroke();
+  x.fillStyle = '#ffd2a8'; x.font = '600 46px system-ui'; x.fillText(title, 40, 74);
+  x.fillStyle = '#e8f1ff'; x.font = '32px system-ui';
+  let line = '', y = 132;
+  for (const w of sub.split(' ')) { const t = line ? line + ' ' + w : w; if (x.measureText(t).width > 944) { x.fillText(line, 40, y); y += 42; line = w; } else line = t; }
+  x.fillText(line, 40, y);
+  tipTex.needsUpdate = true; tip.visible = true;
+}
+function headPose() {
+  const cam = renderer.xr.getCamera();
+  const head = new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld);
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())); fwd.y = 0; fwd.normalize();
+  return { head, fwd };
+}
+function placeTip() {
+  const { head, fwd } = headPose();
+  tip.position.copy(head).addScaledVector(fwd, 0.65); tip.position.y = head.y + 0.14; tip.lookAt(head);
+}
+function startCalib() {
+  if (!renderer.xr.isPresenting) { setStatus('Put the headset on to set your desk'); return; }
+  calib = { step: 0, pts: [], monitors: [] }; calibMarkers.clear(); finishQueued = false; placeTip();
+  showTip('Set your desk  (1 of 3)', 'Touch the FRONT-LEFT corner of your desk with a fingertip or controller tip, then pinch / pull the trigger.');
+  drawMenu();
+}
+function calibPoint(p) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.016, 12, 8), cursorMat); m.position.copy(p); m.renderOrder = R_UI; calibMarkers.add(m);
+  if (calib.step < 2) calib.pts.push(p.clone()); else calib.monitors.push(p.clone());
+  if (calib.step === 0) { calib.step = 1; showTip('Set your desk  (2 of 3)', 'Now the FRONT-RIGHT corner of your desk.'); }
+  else if (calib.step === 1) { calib.step = 2; showTip('Your monitors  (3 of 3)', 'Pinch at the top-middle of each monitor. When you’re done, pinch the menu on your right.'); }
+  else showTip('Your monitors  (3 of 3)', `${calib.monitors.length} monitor${calib.monitors.length > 1 ? 's' : ''} marked. Pinch another, or pinch the menu to finish.`);
+}
+function deskFrame(L, R, head) {
+  const mid = L.clone().add(R).multiplyScalar(0.5);
+  const e = new THREE.Vector3(R.x - L.x, 0, R.z - L.z).normalize();
+  const u = new THREE.Vector3(-e.z, 0, e.x);                       // perpendicular to the edge…
+  if (u.dot(new THREE.Vector3(head.x - mid.x, 0, head.z - mid.z)) < 0) u.negate();   // …pointing at you
+  const theta = Math.atan2(u.x, u.z);
+  return { matrix: new THREE.Matrix4().makeRotationY(theta).setPosition(mid), width: Math.hypot(R.x - L.x, R.z - L.z) };
+}
+function disposeDesk() { if (desk) for (const o of desk.objs) disposeObj(o); desk = null; }
+function buildDesk(matrix, rec) {
+  disposeDesk();
+  const w = rec.width / 2 + 0.03;
+  const top = buildPlaneObject('table', 'horizontal', [[-w, -DESK_DEPTH], [w, -DESK_DEPTH], [w, 0.03], [-w, 0.03]].map(([x, z]) => ({ x, y: 0, z })), matrix);
+  const objs = [top];
+  for (const [x, y, z] of rec.monitors || []) {
+    const local = new THREE.Matrix4().makeTranslation(x, y - 0.25, z).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+    objs.push(buildPlaneObject('screen', 'vertical', [[-0.42, -0.27], [0.42, -0.27], [0.42, 0.27], [-0.42, 0.27]].map(([a, b]) => ({ x: a, y: 0, z: b })), matrix.clone().multiply(local)));
+  }
+  for (const o of objs) realRoot.add(o);
+  const e = matrix.elements;
+  desk = { objs, matrix: matrix.clone(), theta: Math.atan2(e[8], e[10]), seat: new THREE.Vector3(0, 0, SEAT_BACK).applyMatrix4(matrix) };
+  applyVisibility();
+}
+function restoreDesk(session) {
+  const rec = settings.desk;
+  if (!rec) { setTimeout(() => { if (!desk && !calib && renderer.xr.isPresenting) startCalib(); }, 1200); return; }
+  deskWaitUntil = clock.t + 6;
+  const cached = rec.uuid && state.anchors?.[rec.uuid];
+  if (cached) { deskAnchor = cached; return; }
+  if (rec.uuid && session.restorePersistentAnchor) {
+    session.restorePersistentAnchor(rec.uuid)
+      .then(a => { deskAnchor = a; (state.anchors ??= {})[rec.uuid] = a; })
+      .catch(e => { console.warn('desk anchor not found:', e?.message || e); deskLost(); });
+  } else {
+    buildDesk(new THREE.Matrix4().fromArray(rec.pose), rec);
+    setStatus('This browser can’t save the desk spot. If it looks off, press “Set my desk”');
+  }
+}
+function deskLost() {
+  if (desk || calib) return;
+  setStatus('Couldn’t find your saved desk this time. Touch its corners again');
+  startCalib();
+}
+function finishCalib(frame, ref) {
+  const [L, R] = calib.pts;
+  const { matrix, width } = deskFrame(L, R, headPose().head);
+  const inv = matrix.clone().invert();
+  const old = settings.desk;
+  const rec = { width, monitors: calib.monitors.map(p => p.clone().applyMatrix4(inv).toArray().map(v => +v.toFixed(3))), pose: matrix.toArray(), uuid: null };
+  buildDesk(matrix, rec);
+  settings.desk = rec; settings.yaw = 0; settings.useScan = false; clearPlanes();
+  saveSettings(); applyVisibility(); refreshUI();
+  calib = null; tip.visible = false; calibMarkers.clear();
+  setStatus('Desk set ✓ The ship is now built around it');
+  const session = renderer.xr.getSession();
+  if (old?.uuid && session?.deletePersistentAnchor) session.deletePersistentAnchor(old.uuid).catch(() => {});
+  if (!frame.createAnchor) return;
+  const p = new THREE.Vector3().setFromMatrixPosition(matrix), q = new THREE.Quaternion().setFromRotationMatrix(matrix);
+  frame.createAnchor(new XRRigidTransform({ x: p.x, y: p.y, z: p.z }, { x: q.x, y: q.y, z: q.z, w: q.w }), ref)
+    .then(async a => {
+      deskAnchor = a;
+      if (a.requestPersistentHandle) { rec.uuid = await a.requestPersistentHandle(); (state.anchors ??= {})[rec.uuid] = a; saveSettings(); setStatus('Desk saved ✓ It will be there next time'); }
+    })
+    .catch(e => setStatus('Desk set, but saving it failed: ' + (e?.message || e)));
+}
+function updateDesk(frame, ref) {
+  if (deskAnchor && frame.trackedAnchors?.has(deskAnchor)) {
+    const p = frame.getPose(deskAnchor.anchorSpace, ref);
+    if (p) {
+      const m = new THREE.Matrix4().fromArray(p.transform.matrix);
+      const moved = !desk || new THREE.Vector3().setFromMatrixPosition(m).distanceTo(new THREE.Vector3().setFromMatrixPosition(desk.matrix)) > 0.02;
+      if (moved) buildDesk(m, settings.desk);
+    }
+  } else if (deskAnchor && !desk && deskWaitUntil && clock.t > deskWaitUntil) { deskWaitUntil = 0; deskLost(); }
+  if (finishQueued && calib) { finishQueued = false; finishCalib(frame, ref); }
+  // orange dot on each fingertip / controller tip while setting the desk
+  controllers.forEach((c, i) => {
+    cursors[i].visible = !!(calib && c.userData.src);
+    if (cursors[i].visible) cursors[i].position.setFromMatrixPosition(c.matrixWorld);
+  });
+}
+function clearPlanes() { for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear(); }
+
 // ───────────────────────── in-headset menu ─────────────────────────
-const MW = 1024, MH = 640;
+const MW = 1024, MH = 744;
 const mCanvas = document.createElement('canvas'); mCanvas.width = MW; mCanvas.height = MH;
 const mCtx = mCanvas.getContext('2d');
 const mTex = new THREE.CanvasTexture(mCanvas); mTex.colorSpace = THREE.SRGBColorSpace;
-const menu = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.35), new THREE.MeshBasicMaterial({ map: mTex, transparent: true, depthTest: false, toneMapped: false }));
+const menu = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.56 * 744 / 1024), new THREE.MeshBasicMaterial({ map: mTex, transparent: true, depthTest: false, toneMapped: false }));
 menu.renderOrder = R_UI; menu.visible = false; scene.add(menu);
 let markMode = false, statusText = '';
 const BTN = [];
 SCENES.forEach((s, i) => BTN.push({ id: 'scene:' + s.key, x: 32 + i * 242, y: 96, w: 226, h: 96 }));
-[['videoMode', 'play', 'rotate'], ['mark', 'size', 'clear'], ['floor', 'outline', 'rescan']].forEach((row, r) =>
+[['videoMode', 'play', 'demo'], ['mark', 'size', 'clear'], ['floor', 'outline', 'rotate'], ['desk', 'scan', 'rescan']].forEach((row, r) =>
   row.forEach((id, c) => BTN.push({ id, x: 32 + c * 320, y: 216 + r * 104, w: 304, h: 88 })));
 function btnLabel(id) {
   if (id.startsWith('scene:')) return SCENES.find(s => 'scene:' + s.key === id).label;
   return {
-    videoMode: 'Video: ' + settings.videoMode, play: videoLoaded ? (video.paused ? 'Play video' : 'Pause video') : (demoPaused ? 'Play demo clip' : 'Pause demo clip'), rotate: 'Rotate ship ↻ 15°',
+    videoMode: 'Video: ' + settings.videoMode, play: videoLoaded ? (video.paused ? 'Play video' : 'Pause video') : (demoPaused ? 'Play demo clip' : 'Pause demo clip'), rotate: 'Rotate ship ↻ 15°', demo: 'Demo clip',
+    desk: calib ? 'Setting desk…' : settings.desk ? 'Set my desk again' : '⚑ Set my desk', scan: 'Quest room scan: ' + (settings.useScan ? 'on' : 'off'),
     mark: markMode ? 'Marking… (pinch at it)' : 'Mark real zone', size: 'Zone size: ' + Math.round(settings.zoneSize * 100) + ' cm',
     clear: 'Clear real zones', floor: 'Real floor: ' + (settings.realFloor ? 'on' : 'off'),
     outline: 'Room outline: ' + (settings.outline ? 'on' : 'off'), rescan: 'Rescan room',
   }[id];
 }
 function btnOn(id) {
-  return id === 'scene:' + settings.scene || (id === 'mark' && markMode) || (id === 'floor' && settings.realFloor) || (id === 'outline' && settings.outline);
+  return id === 'scene:' + settings.scene || (id === 'mark' && markMode) || (id === 'floor' && settings.realFloor) || (id === 'outline' && settings.outline) || (id === 'scan' && settings.useScan) || (id === 'desk' && !!calib);
 }
 const hovered = [null, null];
 function drawMenu() {
@@ -892,6 +1031,10 @@ function pointAt(c) {
 function onSelect(i) {
   if (window.__xrBridge?.consumes?.(i)) return;   // the press was on the Claude panel
   const c = controllers[i]; const { id } = pointAt(c);
+  if (calib) {   // setting the desk: a touch in the room records a point; the menu finishes once the desk is in
+    if (!id) { calibPoint(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld)); return; }
+    if (calib.step === 2) { finishQueued = true; return; }
+  }
   if (id && id !== 'panel') { doAction(id); return; }
   if (markMode && !id) {
     pendingZones.push(new THREE.Vector3().setFromMatrixPosition(c.matrixWorld));
@@ -913,6 +1056,8 @@ function doAction(id) {
     case 'clear': clearZones(); break;
     case 'floor': settings.realFloor = !settings.realFloor; break;
     case 'outline': settings.outline = !settings.outline; break;
+    case 'desk': startCalib(); break;
+    case 'scan': settings.useScan = !settings.useScan; if (!settings.useScan) clearPlanes(); break;
     case 'rescan': {
       const s = renderer.xr.getSession();
       if (s?.initiateRoomCapture) s.initiateRoomCapture().catch(e => setStatus('Rescan unavailable: ' + e.message));
@@ -974,10 +1119,12 @@ function onSessionStart(session, resumed) {
   if (resumed && state.menuPose) { menu.position.copy(state.menuPose.p); menu.quaternion.copy(state.menuPose.q); }
   else firstXRFrame = true;
   restoreZones(session);
+  restoreDesk(session);
   if (settings.scene === 'video' && videoLoaded) video.play().catch(() => {});
   session.addEventListener('end', () => {
     fakeRoom.visible = true; menu.visible = false; controls.enabled = true;
     for (const z of zones) disposeObj(z.obj); zones = [];
+    disposeDesk(); deskAnchor = null; calib = null; tip.visible = false; calibMarkers.clear(); applyVisibility();
     for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear();
     state.anchors = {}; state.menuPose = null;
   }, { signal });
@@ -1003,8 +1150,9 @@ function frameFn(now, frame) {
   if (frame) {
     const ref = renderer.xr.getReferenceSpace();
     if (firstXRFrame) { recallMenu(); firstXRFrame = false; planeCheckAt = t + 4; }
-    if (frame.detectedPlanes) { syncPlanes(frame, ref); if (frame.detectedPlanes.size) planesSeen = true; }
-    if (!planesSeen && planeCheckAt && t > planeCheckAt) { setStatus('No room scan found. Try "Rescan room" so your desk stays real.'); planeCheckAt = 0; }
+    if (frame.detectedPlanes && settings.useScan) { syncPlanes(frame, ref); if (frame.detectedPlanes.size) planesSeen = true; }
+    updateDesk(frame, ref);
+    if (!planesSeen && !settings.desk && settings.useScan && planeCheckAt && t > planeCheckAt) { setStatus('No room scan found. Try "Rescan room" so your desk stays real.'); planeCheckAt = 0; }
     for (const z of zones) {
       if (z.anchor && frame.trackedAnchors?.has(z.anchor)) {
         const p = frame.getPose(z.anchor.anchorSpace, ref);
@@ -1051,6 +1199,8 @@ function describe() {
     realFloor: settings.realFloor, outline: settings.outline, realZones: zones.length,
     detectedPlanes: [...planeObjs.values()].map(r => r.obj.userData.label),
     markMode, menuVisible: menu.visible, status: statusText,
+    desk: desk ? { center: new THREE.Vector3().setFromMatrixPosition(desk.matrix).toArray().map(v => +v.toFixed(3)), yawDeg: +(desk.theta * 180 / Math.PI).toFixed(1), widthM: +settings.desk.width.toFixed(2), monitors: settings.desk.monitors.length, anchored: !!deskAnchor } : (settings.desk ? 'saved but not found yet' : 'not set'),
+    settingDesk: calib ? ['front-left corner', 'front-right corner', 'monitors'][calib.step] : null, useQuestScan: settings.useScan,
   };
 }
 
@@ -1059,4 +1209,4 @@ showScene(settings.scene);
 SHELL.scene.add(scene);
 if (renderer.xr.isPresenting) onSessionStart(renderer.xr.getSession(), true);
 if (actx && actx.state === 'running') ensureAudio();
-SHELL.world = { frame: frameFn, dispose, describe };
+SHELL.world = { frame: frameFn, dispose, describe, debug: { deskFrame, buildDesk, disposeDesk, applyVisibility } };
