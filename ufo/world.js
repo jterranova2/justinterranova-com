@@ -736,7 +736,9 @@ function syncPlanes(frame, ref) {
     }
     rec.obj.matrix.fromArray(pose.transform.matrix); if (rec.obj.userData.flip) rec.obj.matrix.multiply(FLIP);
     rec.obj.matrixWorldNeedsUpdate = true;
-    if (rec.obj.userData.label === 'table' && !rec.aligned) { rec.aligned = true; deskFromScan(rec.obj); }
+    // Line up with the desk once per visit, then stay put. (The Quest keeps refining its scan; re-aligning on every
+    // refinement made the ship spin around you whenever you moved.)
+    if (rec.obj.userData.label === 'table' && !scanDesk) deskFromScan(rec.obj);
   });
   for (const [plane, rec] of planeObjs) if (!seen.has(plane)) { disposeObj(rec.obj); planeObjs.delete(plane); }
 }
@@ -1022,9 +1024,9 @@ function updateDesk(frame, ref) {
     if (cursors[i].visible) cursors[i].position.setFromMatrixPosition(c.matrixWorld);
   });
 }
-function clearPlanes() { for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear(); scanDesk = null; monitorBand?.removeFromParent(); monitorBand = null; applyVisibility(); }
+function clearPlanes() { for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear(); scanDesk = state.scanDesk = null; monitorBand?.removeFromParent(); monitorBand = null; applyVisibility(); }
 // From a scanned table: its edge nearest you is the front edge.
-let scanDesk = null, monitorBand = null;
+let scanDesk = state.scanDesk ?? null, monitorBand = null;   // kept in state so live updates don't re-align
 function deskFromScan(obj) {
   if (!renderer.xr.isPresenting) return;
   // Scanned desk outlines are often irregular (many short edges), so don't look for a straight front edge.
@@ -1039,7 +1041,7 @@ function deskFromScan(obj) {
   if (best.dot(u) > Math.cos(THREE.MathUtils.degToRad(25))) u = best.clone();
   const theta = Math.atan2(u.x, u.z);
   const seat = new THREE.Vector3(head.x, 0, head.z);   // the ship is centred on where you're actually sitting
-  scanDesk = { theta, seat };
+  scanDesk = state.scanDesk = { theta, seat };
   // Monitors aren't in the Quest's scan, so keep a band along the back of the desk real, up to 70 cm above it.
   const e = new THREE.Vector3(u.z, 0, -u.x);
   const pu = pts.map(p => p.clone().sub(center).dot(u)), pe = pts.map(p => p.clone().sub(center).dot(e));
@@ -1335,7 +1337,7 @@ function onSessionStart(session, resumed) {
     fakeRoom.visible = true; menu.visible = false; controls.enabled = true;
     for (const z of zones) disposeObj(z.obj); zones = [];
     disposeGear(); gearMode = null;
-    disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = null; tip.visible = false; state.floorLevel = null; cabinRoot.position.y = 0; calibMarkers.clear(); applyVisibility();
+    disposeDesk(); deskAnchor = null; calib = null; monitorMode = null; scanDesk = state.scanDesk = null; tip.visible = false; state.floorLevel = null; cabinRoot.position.y = 0; calibMarkers.clear(); applyVisibility();
     for (const [, rec] of planeObjs) disposeObj(rec.obj); planeObjs.clear();
     state.anchors = {}; state.menuPose = null;
   }, { signal });
