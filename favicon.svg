@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect x="1" y="1" width="62" height="62" rx="14" fill="#141d2a" stroke="#2f4e68" stroke-width="2"/>
-  <text x="32" y="42" text-anchor="middle" font-family="IBM Plex Mono, Consolas, ui-monospace, monospace" font-size="26" font-weight="700" fill="#5b9fd4">JT</text>
+  <rect width="64" height="64" rx="12" fill="#1a1813"/>
+  <rect x="14" y="14" width="8" height="8" fill="#e8673a"/>
+  <text x="32" y="47" text-anchor="middle" font-family="Newsreader, Georgia, 'Times New Roman', serif" font-size="30" font-style="italic" fill="#f4f1e9">JT</text>
 </svg>

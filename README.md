@@ -1,39 +1,27 @@
-# Justin Terranova Portfolio
+# justinterranova.com
 
-Ops / BI / Analytics leadership portfolio — static HTML/CSS/JS with a single-page home and polished subpages.
-
-**Live:** [jterranova2.github.io/justinterranova-com](https://jterranova2.github.io/justinterranova-com/) · [justinterranova.com](https://www.justinterranova.com)
+Personal site of Justin Terranova, Data and AI Architect for operations-heavy businesses. Plain HTML, CSS and a few lines of JS. No build step, no tracking.
 
 ## Pages
 
-| File | Description |
-|------|-------------|
-| `index.html` | Home — hero, KPIs, capabilities, outcomes, timeline, stack, contact |
-| `about.html` | About + contact |
-| `resume.html` | Full work history + education |
-| `skills.html` | Skills inventory |
-| `styles.css` | Design system (ops command center) |
-| `script.js` | Spotlight, reveals, KPI count-up, sticky nav |
-| `assets/` | Portrait and images |
+| File | What it is |
+|------|------------|
+| `index.html` | Single-page home: hero with the Monday brief, results, how I work, experience, independent work, skills, contact |
+| `resume.html` | Printable resume (Print or save as PDF button; print styles in `styles.css`) |
+| `about.html`, `skills.html`, `portfolio.html` | Redirects to the matching home page section, so old links keep working |
+| `styles.css` | All styles, light and dark themes, print styles |
+| `script.js` | Theme toggle, print button, footer year |
 
 ## Design
 
-Cool ops cyan on deep charcoal (`#0b0e14`), Space Grotesk + IBM Plex Mono, glass nav, cursor/card spotlights (disabled for touch / reduced motion), scroll reveals, and KPI count-up.
+Warm paper and ink, one vermilion accent. Newsreader for headings and figures, Geist for text, Geist Mono for labels. Dark theme follows the system and can be switched with the header button.
 
 ## Local preview
 
 ```bash
-cd justinterranova-com
-python3 -m http.server 8080
+python -m http.server 8080
 ```
-
-Visit [http://localhost:8080](http://localhost:8080). No build step.
 
 ## Deploy
 
-GitHub Pages (or Cloudflare Pages / Netlify) from `main` — publish the site root. CNAME: `www.justinterranova.com`.
-
-## Contact
-
-- Email: [jterranova2@gmail.com](mailto:jterranova2@gmail.com)
-- LinkedIn: [linkedin.com/in/justinterranova](https://www.linkedin.com/in/justinterranova/)
+GitHub Pages from `main`. CNAME: `www.justinterranova.com`.
