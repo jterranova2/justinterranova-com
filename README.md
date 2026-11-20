@@ -14,7 +14,7 @@ Personal site of Justin Terranova, Data and AI Architect for operations-heavy bu
 
 ## Design
 
-Warm paper and ink, one vermilion accent. Newsreader for headings and figures, Geist for text, Geist Mono for labels. Dark theme follows the system and can be switched with the header button.
+Clean white and deep ink, one teal accent. Schibsted Grotesk for headings and figures, Public Sans for text. Dark theme follows the system and can be switched with the header button.
 
 ## Local preview
 
